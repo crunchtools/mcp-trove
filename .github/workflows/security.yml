@@ -1,0 +1,94 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  security-events: write
+
+jobs:
+  dependency-audit:
+    name: Dependency CVE Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Install dependencies
+        run: uv sync
+      - name: Install pip-audit
+        run: uv pip install pip-audit
+      - name: Run pip-audit
+        id: audit
+        continue-on-error: true
+        run: |
+          uv run pip-audit --format=json --output=audit-results.json || true
+          uv run pip-audit --format=markdown --output=audit-results.md || true
+          if [ -f audit-results.json ]; then
+            VULN_COUNT=$(cat audit-results.json | python -c "import sys,json; data=json.load(sys.stdin); print(len([d for d in data if d.get('vulns', [])]))" 2>/dev/null || echo "0")
+            echo "vuln_count=$VULN_COUNT" >> $GITHUB_OUTPUT
+          else
+            echo "vuln_count=0" >> $GITHUB_OUTPUT
+          fi
+      - name: Upload audit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit-results
+          path: |
+            audit-results.json
+            audit-results.md
+          retention-days: 30
+      - name: Fail on vulnerabilities (PRs only)
+        if: steps.audit.outputs.vuln_count != '0' && github.event_name == 'pull_request'
+        run: |
+          echo "::error::Security vulnerabilities found in dependencies."
+          exit 1
+
+  container-scan:
+    name: Container Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build container image
+        run: docker build -f Containerfile -t mcp-trove:scan .
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "mcp-trove:scan"
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "CRITICAL,HIGH"
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-results.sarif"
+
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          queries: security-extended
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"

@@ -1,0 +1,29 @@
+[[exceptions]]
+check = "summary_litter"
+path = "CLAUDE.md"
+justification = "Claude Code project instructions for AI assistant orientation"
+
+[[exceptions]]
+check = "primitive_obsession"
+path = "src/mcp_trove_crunchtools/database.py"
+justification = "SQLite schema constants and vector dimensions are standard well-known values"
+
+[[exceptions]]
+check = "primitive_obsession"
+path = "src/mcp_trove_crunchtools/__init__.py"
+justification = "Port 8020 is the assigned HTTP port for this MCP server"
+
+[[exceptions]]
+check = "primitive_obsession"
+path = "src/mcp_trove_crunchtools/config.py"
+justification = "Default chunk size (1000) and overlap (200) are standard text chunking values"
+
+[[exceptions]]
+check = "primitive_obsession"
+path = "src/mcp_trove_crunchtools/indexer.py"
+justification = "File size limits and hash buffer sizes are standard well-known constants"
+
+[[exceptions]]
+check = "lint_suppression"
+path = "src/mcp_trove_crunchtools/config.py"
+justification = "SecretStr TYPE_CHECKING import required by MCP Server constitution profile"

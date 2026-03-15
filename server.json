@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.crunchtools/trove",
+  "title": "MCP Trove",
+  "description": "Self-hosted local file indexing MCP server with semantic search",
+  "repository": {
+    "url": "https://github.com/crunchtools/mcp-trove",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "mcp-trove-crunchtools",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

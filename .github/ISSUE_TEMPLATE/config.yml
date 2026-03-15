@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: fastembed Documentation
+    url: https://qdrant.github.io/fastembed/
+    about: Check fastembed docs for embedding model questions
