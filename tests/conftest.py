@@ -11,6 +11,7 @@ import pytest
 from mcp_trove_crunchtools import config as config_mod
 from mcp_trove_crunchtools import database as db_mod
 from mcp_trove_crunchtools import embedder as embedder_mod
+from mcp_trove_crunchtools import vision as vision_mod
 
 if TYPE_CHECKING:
     import sqlite3
@@ -45,12 +46,14 @@ def _reset_singletons() -> Generator[None]:
     config_mod._config = None
     db_mod._db = None
     embedder_mod._model = None
+    vision_mod._backend = None
     yield
     if db_mod._db is not None:
         db_mod._db.close()
     db_mod._db = None
     config_mod._config = None
     embedder_mod._model = None
+    vision_mod._backend = None
 
 
 @pytest.fixture(autouse=True)

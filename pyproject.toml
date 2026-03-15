@@ -28,6 +28,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+vision-gemini = ["google-genai>=1.0"]
+vision-openai = ["openai>=1.0"]
+vision = ["google-genai>=1.0", "openai>=1.0"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
@@ -78,7 +81,7 @@ warn_return_any = true
 warn_unused_configs = true
 
 [[tool.mypy.overrides]]
-module = ["fastembed", "pymupdf4llm", "docx", "sqlite_vec"]
+module = ["fastembed", "pymupdf4llm", "docx", "sqlite_vec", "google", "google.genai", "openai", "PIL", "PIL.ExifTags"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

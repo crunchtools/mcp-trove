@@ -18,8 +18,13 @@ DEFAULT_INDEX_WORKERS = 2
 DEFAULT_INDEX_BATCH = 50
 DEFAULT_EXCLUDE_PATTERNS = (
     "*.iso,*.zip,*.tar.gz,*.tar.bz2,*.7z,*.rar,"
-    "*.mp4,*.avi,*.mkv,*.mov,*.wmv,"
     "*.exe,*.dll,*.bin,*.dat"
+)
+
+DEFAULT_VISION_PROMPT = (
+    "Generate a concise caption for this image suitable for search indexing. "
+    "Include: what you see, location if identifiable, time of day, any readable "
+    "text or signs."
 )
 
 
@@ -58,6 +63,24 @@ class Config:
         self.chunk_overlap: int = int(
             os.environ.get("TROVE_CHUNK_OVERLAP", str(DEFAULT_CHUNK_OVERLAP))
         )
+        self.vision_backend: str = os.environ.get(
+            "TROVE_VISION_BACKEND", "none"
+        ).lower()
+        self.vision_model: str = os.environ.get(
+            "TROVE_VISION_MODEL", self._default_vision_model()
+        )
+        self.vision_prompt: str = os.environ.get(
+            "TROVE_VISION_PROMPT", DEFAULT_VISION_PROMPT
+        )
+
+    def _default_vision_model(self) -> str:
+        """Return default model name based on vision backend."""
+        defaults = {
+            "gemini": "gemini-2.5-flash",
+            "openai": "gpt-4o-mini",
+            "ollama": "llava",
+        }
+        return defaults.get(self.vision_backend, "")
 
     def ensure_db_dir(self) -> None:
         """Create the database directory if it does not exist."""

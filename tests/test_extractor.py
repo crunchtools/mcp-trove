@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -27,6 +28,21 @@ class TestDetectFileType:
     def test_docx_file(self) -> None:
         assert detect_file_type(Path("test.docx")) == "docx"
 
+    def test_image_file(self) -> None:
+        assert detect_file_type(Path("photo.jpg")) == "image"
+        assert detect_file_type(Path("photo.jpeg")) == "image"
+        assert detect_file_type(Path("photo.png")) == "image"
+        assert detect_file_type(Path("photo.gif")) == "image"
+        assert detect_file_type(Path("photo.webp")) == "image"
+        assert detect_file_type(Path("photo.heic")) == "image"
+
+    def test_video_file(self) -> None:
+        assert detect_file_type(Path("clip.mp4")) == "video"
+        assert detect_file_type(Path("clip.mov")) == "video"
+        assert detect_file_type(Path("clip.avi")) == "video"
+        assert detect_file_type(Path("clip.webm")) == "video"
+        assert detect_file_type(Path("clip.mkv")) == "video"
+
     def test_unsupported_file(self) -> None:
         with pytest.raises(UnsupportedFileTypeError):
             detect_file_type(Path("test.xyz"))
@@ -48,8 +64,33 @@ class TestIsSupported:
 
     def test_unsupported_extensions(self) -> None:
         assert not is_supported(Path("test.iso"))
-        assert not is_supported(Path("test.mp4"))
         assert not is_supported(Path("test.exe"))
+
+    def test_image_unsupported_without_vision(self) -> None:
+        """Images are not supported when vision backend is none."""
+        assert not is_supported(Path("test.jpg"))
+        assert not is_supported(Path("test.png"))
+
+    def test_video_unsupported_without_vision(self) -> None:
+        """Videos are not supported when vision backend is none."""
+        assert not is_supported(Path("test.mp4"))
+        assert not is_supported(Path("test.mov"))
+
+    def test_image_supported_with_vision(self) -> None:
+        """Images are supported when a vision backend is configured."""
+        mock_backend = MagicMock()
+        with patch("mcp_trove_crunchtools.vision.get_backend", return_value=mock_backend):
+            assert is_supported(Path("test.jpg"))
+            assert is_supported(Path("test.png"))
+            assert is_supported(Path("test.heic"))
+
+    def test_video_supported_with_vision(self) -> None:
+        """Videos are supported when a vision backend is configured."""
+        mock_backend = MagicMock()
+        with patch("mcp_trove_crunchtools.vision.get_backend", return_value=mock_backend):
+            assert is_supported(Path("test.mp4"))
+            assert is_supported(Path("test.mov"))
+            assert is_supported(Path("test.webm"))
 
 
 class TestExtractText:

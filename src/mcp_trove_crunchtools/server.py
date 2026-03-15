@@ -23,7 +23,10 @@ mcp = FastMCP(
     instructions=(
         "Self-hosted local file indexing MCP server with semantic search. "
         "Index any local directory and search over contents using hybrid "
-        "vector + keyword search. Supports PDF, DOCX, Markdown, and text files."
+        "vector + keyword search. Supports PDF, DOCX, Markdown, and text files. "
+        "When a vision backend is configured (TROVE_VISION_BACKEND), also indexes "
+        "images and videos by captioning them via AI vision APIs, with EXIF "
+        "metadata extraction for searchable dates, GPS coordinates, and camera info."
     ),
 )
 
