@@ -1,5 +1,5 @@
 # MCP Trove CrunchTools Container
-# Built on Hummingbird Python image (Red Hat UBI-based) for enterprise security
+# Multi-stage build: compile native wheels in builder, copy into Hummingbird
 #
 # Build:
 #   podman build -t quay.io/crunchtools/mcp-trove .
@@ -11,6 +11,18 @@
 #   claude mcp add mcp-trove-crunchtools \
 #     -- podman run -i --rm -v trove-data:/data -v ~/Documents:/docs:ro quay.io/crunchtools/mcp-trove
 
+# Stage 1: Build wheels (needs gcc for py-rust-stemmers on Python 3.14)
+FROM registry.fedoraproject.org/fedora:44 AS builder
+
+RUN dnf install -y python3 python3-pip gcc && dnf clean all
+
+WORKDIR /build
+COPY pyproject.toml README.md ./
+COPY src/ ./src/
+
+RUN pip wheel --no-cache-dir --wheel-dir=/wheels .
+
+# Stage 2: Runtime image (minimal, no build tools)
 FROM quay.io/hummingbird/python:latest
 
 LABEL name="mcp-trove-crunchtools" \
@@ -27,14 +39,12 @@ LABEL name="mcp-trove-crunchtools" \
 
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
-COPY src/ ./src/
-
-RUN pip install --no-cache-dir .
+COPY --from=builder /wheels /wheels
+RUN pip install --no-cache-dir --no-index --find-links=/wheels mcp-trove-crunchtools
 
 RUN python -c "from mcp_trove_crunchtools import main; print('Installation verified')"
 
-ENV TROVE_DB=/data/trove.db
+ENV TROVE_DB=/tmp/trove-data/trove.db
 
 EXPOSE 8020
 ENTRYPOINT ["python", "-m", "mcp_trove_crunchtools"]
