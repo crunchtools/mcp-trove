@@ -14,7 +14,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# MIME types for vision APIs
 _IMAGE_MIMES: dict[str, str] = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
@@ -38,22 +37,16 @@ _VIDEO_MIMES: dict[str, str] = {
 
 
 class VisionBackend(Protocol):
-    """Protocol for vision backends."""
-
-    def caption(self, path: Path, file_type: str) -> str:
-        """Generate a text caption for an image or video file."""
-        ...
+    def caption(self, path: Path, file_type: str) -> str: ...
 
 
 class GeminiBackend:
-    """Google Gemini vision backend using google-genai SDK."""
-
     def __init__(self, model: str, prompt: str) -> None:
         self._model = model
         self._prompt = prompt
 
-    def caption(self, path: Path, file_type: str) -> str:  # noqa: ARG002
-        """Caption an image or video via Gemini."""
+    def caption(self, path: Path, file_type: str) -> str:
+        _ = file_type
         try:
             from google import genai
             from google.genai import types
@@ -70,18 +63,17 @@ class GeminiBackend:
 
         client = genai.Client(api_key=api_key)
         mime = _get_mime(path)
-        data = path.read_bytes()
+        file_bytes = path.read_bytes()
 
+        content = types.Content(
+            parts=[
+                types.Part.from_bytes(data=file_bytes, mime_type=mime),
+                types.Part.from_text(text=self._prompt),
+            ]
+        )
         response = client.models.generate_content(
             model=self._model,
-            contents=[
-                types.Content(
-                    parts=[
-                        types.Part.from_bytes(data=data, mime_type=mime),
-                        types.Part.from_text(text=self._prompt),
-                    ]
-                )
-            ],
+            contents=content,
         )
         if response.text:
             return str(response.text)
@@ -89,14 +81,11 @@ class GeminiBackend:
 
 
 class OpenAIBackend:
-    """OpenAI vision backend using openai SDK."""
-
     def __init__(self, model: str, prompt: str) -> None:
         self._model = model
         self._prompt = prompt
 
     def caption(self, path: Path, file_type: str) -> str:
-        """Caption an image via OpenAI."""
         if file_type == "video":
             raise ExtractionError(str(path), "OpenAI vision does not support video files")
 
@@ -116,7 +105,7 @@ class OpenAIBackend:
         client = openai.OpenAI(api_key=api_key)
         mime = _get_mime(path)
         b64 = base64.b64encode(path.read_bytes()).decode("ascii")
-        data_url = f"data:{mime};base64,{b64}"
+        image_url = f"data:{mime};base64,{b64}"
 
         response = client.chat.completions.create(
             model=self._model,
@@ -125,28 +114,25 @@ class OpenAIBackend:
                     "role": "user",
                     "content": [
                         {"type": "text", "text": self._prompt},
-                        {"type": "image_url", "image_url": {"url": data_url}},
+                        {"type": "image_url", "image_url": {"url": image_url}},
                     ],
                 }
             ],
             max_tokens=300,
         )
-        text = response.choices[0].message.content
-        if text:
-            return str(text)
+        response_text = response.choices[0].message.content
+        if response_text:
+            return str(response_text)
         raise ExtractionError(str(path), "OpenAI returned empty response")
 
 
 class OllamaBackend:
-    """Ollama local vision backend via HTTP API."""
-
     def __init__(self, model: str, prompt: str) -> None:
         self._model = model
         self._prompt = prompt
         self._base_url = "http://localhost:11434"
 
     def caption(self, path: Path, file_type: str) -> str:
-        """Caption an image via local Ollama instance."""
         if file_type == "video":
             raise ExtractionError(str(path), "Ollama vision does not support video files")
 
@@ -161,25 +147,23 @@ class OllamaBackend:
             "stream": False,
         }).encode()
 
-        req = urllib.request.Request(  # noqa: S310
-            f"{self._base_url}/api/generate",
-            data=payload,
-            headers={"Content-Type": "application/json"},
+        ollama_url = f"{self._base_url}/api/generate"
+        req = urllib.request.Request(
+            ollama_url, data=payload, headers={"Content-Type": "application/json"},
         )
         try:
-            with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310
-                result = json.loads(resp.read().decode())
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                ollama_response = json.loads(resp.read().decode())
         except Exception as exc:
             raise ExtractionError(str(path), f"Ollama request failed: {exc}") from exc
 
-        text = result.get("response", "")
-        if text:
-            return str(text)
+        response_text = ollama_response.get("response", "")
+        if response_text:
+            return str(response_text)
         raise ExtractionError(str(path), "Ollama returned empty response")
 
 
 def _get_mime(path: Path) -> str:
-    """Get MIME type for a file based on extension."""
     suffix = path.suffix.lower()
     mime = _IMAGE_MIMES.get(suffix) or _VIDEO_MIMES.get(suffix)
     if mime:
@@ -205,12 +189,12 @@ def get_backend() -> VisionBackend | None:
         "openai": OpenAIBackend,
         "ollama": OllamaBackend,
     }
-    cls = backends.get(cfg.vision_backend)
-    if cls is None:
+    backend_cls = backends.get(cfg.vision_backend)
+    if backend_cls is None:
         logger.warning("Unknown vision backend: %s", cfg.vision_backend)
         return None
 
-    _backend = cls(cfg.vision_model, cfg.vision_prompt)
+    _backend = backend_cls(cfg.vision_model, cfg.vision_prompt)
     return _backend
 
 

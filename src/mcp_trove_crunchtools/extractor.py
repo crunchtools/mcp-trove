@@ -33,12 +33,11 @@ IMAGE_EXTENSIONS = {
 }
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".webm", ".mkv"}
 
-# Base extensions always supported
 _BASE_EXTENSIONS = TEXT_EXTENSIONS | PDF_EXTENSIONS | DOCX_EXTENSIONS
 
 
 def _get_supported_extensions() -> set[str]:
-    """Build supported extensions set, conditionally including vision types."""
+    """Build supported extensions, including vision types when configured."""
     from .vision import get_backend
 
     extensions = set(_BASE_EXTENSIONS)
@@ -47,7 +46,6 @@ def _get_supported_extensions() -> set[str]:
     return extensions
 
 
-# Keep module-level name for backward compatibility, but make it dynamic
 SUPPORTED_EXTENSIONS = _BASE_EXTENSIONS
 
 
@@ -76,10 +74,7 @@ def is_supported(path: Path) -> bool:
 
 
 def extract_text(path: Path) -> str:
-    """Extract text content from a file.
-
-    Returns the full text content as a string.
-    """
+    """Extract text content from a file."""
     file_type = detect_file_type(path)
 
     if file_type == "pdf":
@@ -94,7 +89,6 @@ def extract_text(path: Path) -> str:
 
 
 def _extract_text_file(path: Path) -> str:
-    """Extract text from a plain text file."""
     try:
         return path.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
@@ -102,22 +96,18 @@ def _extract_text_file(path: Path) -> str:
 
 
 def _extract_pdf(path: Path) -> str:
-    """Extract text from a PDF file using pymupdf4llm."""
     try:
         import pymupdf4llm
 
-        result: str = pymupdf4llm.to_markdown(str(path))
+        markdown: str = pymupdf4llm.to_markdown(str(path))
     except ImportError as exc:
-        raise ExtractionError(
-            str(path), "pymupdf4llm not installed"
-        ) from exc
+        raise ExtractionError(str(path), "pymupdf4llm not installed") from exc
     except Exception as exc:
         raise ExtractionError(str(path), str(exc)) from exc
-    return result
+    return markdown
 
 
 def _extract_docx(path: Path) -> str:
-    """Extract text from a DOCX file using python-docx."""
     try:
         import docx
 
@@ -125,18 +115,13 @@ def _extract_docx(path: Path) -> str:
         paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
         return "\n\n".join(paragraphs)
     except ImportError as exc:
-        raise ExtractionError(
-            str(path), "python-docx not installed"
-        ) from exc
+        raise ExtractionError(str(path), "python-docx not installed") from exc
     except Exception as exc:
         raise ExtractionError(str(path), str(exc)) from exc
 
 
 def _extract_exif(path: Path) -> str:
-    """Extract EXIF metadata from an image file.
-
-    Returns a formatted metadata string, or empty string if no EXIF data.
-    """
+    """Extract EXIF metadata from an image, or empty string if unavailable."""
     try:
         from PIL import Image
         from PIL.ExifTags import GPSTAGS
@@ -148,71 +133,64 @@ def _extract_exif(path: Path) -> str:
             exif_data = img.getexif()
             if not exif_data:
                 return ""
-
-            fields = _collect_exif_fields(exif_data, GPSTAGS)
-            if not fields:
-                return ""
-            return "[EXIF] " + " | ".join(fields)
-
+            return _format_exif(exif_data, GPSTAGS)
     except Exception:
         logger.debug("Failed to read EXIF from %s", path, exc_info=True)
         return ""
 
 
-def _collect_exif_fields(
-    exif_data: Any, gpstags: dict[int, str]
-) -> list[str]:
-    """Collect EXIF fields from parsed EXIF data."""
+def _format_exif(exif_data: Any, gpstags: dict[int, str]) -> str:
+    """Format EXIF data into a searchable metadata string."""
     fields: list[str] = []
 
-    # Date/time (DateTimeOriginal, DateTimeDigitized, DateTime)
     for tag_id in (36867, 36868, 306):
-        val = exif_data.get(tag_id)
-        if val:
-            fields.append(f"Date: {val}")
+        date_val = exif_data.get(tag_id)
+        if date_val:
+            fields.append(f"Date: {date_val}")
             break
 
-    # Camera make/model
     make = exif_data.get(271, "")
-    model = exif_data.get(272, "")
-    if model:
-        camera = f"{make} {model}".strip() if make and make not in model else model
+    camera_model = exif_data.get(272, "")
+    if camera_model:
+        if make and make not in camera_model:
+            camera = f"{make} {camera_model}".strip()
+        else:
+            camera = camera_model
         fields.append(f"Camera: {camera}")
 
-    # GPS coordinates
-    gps_info = exif_data.get_ifd(0x8825)
-    if gps_info:
-        gps = _parse_gps(gps_info, gpstags)
-        if gps:
-            fields.append(f"GPS: {gps}")
+    gps_ifd = exif_data.get_ifd(0x8825)
+    if gps_ifd:
+        coords = _format_gps(gps_ifd, gpstags)
+        if coords:
+            fields.append(f"GPS: {coords}")
 
-    # Image dimensions
-    width = exif_data.get(256)
-    height = exif_data.get(257)
-    if width and height:
-        fields.append(f"Size: {width}x{height}")
+    img_width = exif_data.get(256)
+    img_height = exif_data.get(257)
+    if img_width and img_height:
+        fields.append(f"Size: {img_width}x{img_height}")
 
-    return fields
+    if not fields:
+        return ""
+    return "[EXIF] " + " | ".join(fields)
 
 
-def _parse_gps(gps_info: dict[int, object], gpstags: dict[int, str]) -> str:
-    """Parse GPS EXIF data into a readable coordinate string."""
+def _format_gps(gps_ifd: dict[int, object], gpstags: dict[int, str]) -> str:
+    """Format GPS EXIF IFD into a decimal coordinate string."""
     tagged: dict[str, object] = {}
-    for key, val in gps_info.items():
-        tag_name = gpstags.get(key, str(key))
-        tagged[tag_name] = val
+    for key, val in gps_ifd.items():
+        tagged[gpstags.get(key, str(key))] = val
 
-    lat = tagged.get("GPSLatitude")
+    lat_dms = tagged.get("GPSLatitude")
     lat_ref = tagged.get("GPSLatitudeRef")
-    lon = tagged.get("GPSLongitude")
+    lon_dms = tagged.get("GPSLongitude")
     lon_ref = tagged.get("GPSLongitudeRef")
 
-    if not (lat and lat_ref and lon and lon_ref):
+    if not (lat_dms and lat_ref and lon_dms and lon_ref):
         return ""
 
     try:
-        lat_deg = _dms_to_decimal(lat)  # type: ignore[arg-type]
-        lon_deg = _dms_to_decimal(lon)  # type: ignore[arg-type]
+        lat_deg = _dms_to_decimal(cast_dms(lat_dms))
+        lon_deg = _dms_to_decimal(cast_dms(lon_dms))
     except (TypeError, ValueError, ZeroDivisionError):
         return ""
     else:
@@ -223,9 +201,15 @@ def _parse_gps(gps_info: dict[int, object], gpstags: dict[int, str]) -> str:
         return f"{lat_deg:.4f}\u00b0N, {lon_deg:.4f}\u00b0E"
 
 
+def cast_dms(val: object) -> tuple[float, float, float]:
+    """Cast an EXIF DMS value to a typed tuple for decimal conversion."""
+    seq: tuple[Any, ...] = tuple(val)  # type: ignore[arg-type]
+    return (float(seq[0]), float(seq[1]), float(seq[2]))
+
+
 def _dms_to_decimal(dms: tuple[float, float, float]) -> float:
-    """Convert degrees/minutes/seconds tuple to decimal degrees."""
-    return float(dms[0]) + float(dms[1]) / 60.0 + float(dms[2]) / 3600.0
+    """Convert degrees/minutes/seconds to decimal degrees."""
+    return dms[0] + dms[1] / 60.0 + dms[2] / 3600.0
 
 
 def _extract_image(path: Path) -> str:
@@ -236,24 +220,14 @@ def _extract_image(path: Path) -> str:
     if backend is None:
         raise ExtractionError(str(path), "No vision backend configured")
 
-    parts: list[str] = []
+    parts: list[str] = [f"[File] {path.name}"]
 
-    # EXIF metadata (free, no API call)
     exif = _extract_exif(path)
     if exif:
         parts.append(exif)
 
-    # Vision caption (API call)
-    try:
-        caption = backend.caption(path, "image")
-        parts.append(f"[Caption] {caption}")
-    except ExtractionError:
-        raise
-    except Exception as exc:
-        raise ExtractionError(str(path), f"Vision captioning failed: {exc}") from exc
-
-    # File context
-    parts.insert(0, f"[File] {path.name}")
+    caption = backend.caption(path, "image")
+    parts.append(f"[Caption] {caption}")
 
     return "\n".join(parts)
 
@@ -266,14 +240,5 @@ def _extract_video(path: Path) -> str:
     if backend is None:
         raise ExtractionError(str(path), "No vision backend configured")
 
-    parts: list[str] = [f"[File] {path.name}"]
-
-    try:
-        caption = backend.caption(path, "video")
-        parts.append(f"[Caption] {caption}")
-    except ExtractionError:
-        raise
-    except Exception as exc:
-        raise ExtractionError(str(path), f"Vision captioning failed: {exc}") from exc
-
-    return "\n".join(parts)
+    caption = backend.caption(path, "video")
+    return f"[File] {path.name}\n[Caption] {caption}"

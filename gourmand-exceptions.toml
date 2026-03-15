@@ -27,3 +27,88 @@ justification = "File size limits and hash buffer sizes are standard well-known 
 check = "lint_suppression"
 path = "src/mcp_trove_crunchtools/config.py"
 justification = "SecretStr TYPE_CHECKING import required by MCP Server constitution profile"
+
+[[exceptions]]
+check = "single_use_helpers"
+path = "src/mcp_trove_crunchtools/extractor.py"
+justification = "Dispatcher pattern: extract_text() dispatches to _extract_pdf, _extract_docx, _extract_image, _extract_video, _extract_text_file by file type. Each handles a distinct format with different library imports. Inlining would create a 200+ line function mixing pymupdf4llm, python-docx, PIL, and vision imports."
+
+[[exceptions]]
+check = "single_use_helpers"
+path = "src/mcp_trove_crunchtools/config.py"
+justification = "Config parsing helpers _parse_paths and _parse_exclude separate parsing logic from __init__; _default_vision_model maps backend names to model defaults."
+
+[[exceptions]]
+check = "single_use_helpers"
+path = "tests/conftest.py"
+justification = "Test fixture helper _mock_embedding generates deterministic vectors used by _mock_embed_texts; test boundary code."
+
+[[exceptions]]
+check = "lint_suppression"
+path = "src/mcp_trove_crunchtools/extractor.py"
+justification = "PIL EXIF returns untyped IFD values; type: ignore on cast_dms is required to convert object to tuple for float extraction."
+
+[[exceptions]]
+check = "lint_suppression"
+path = "tests/test_validation.py"
+justification = "type: ignore[call-arg] used to deliberately test that extra fields are rejected by pydantic models."
+
+[[exceptions]]
+check = "primitive_obsession"
+path = "src/mcp_trove_crunchtools/extractor.py"
+justification = "EXIF tag IDs (36867, 271, 272, 256, 257, 0x8825) are standardized TIFF/EXIF constants defined by the EXIF specification."
+
+[[exceptions]]
+check = "primitive_obsession"
+path = "src/mcp_trove_crunchtools/vision.py"
+justification = "HTTP timeout (120s) for Ollama local API and max_tokens (300) for OpenAI are standard API call parameters."
+
+[[exceptions]]
+check = "test_skip_evasion"
+path = "tests/test_indexer.py"
+justification = "test_scan_skips_large_files is skipped on CI because creating a 100MB temp file is slow and unreliable in constrained environments."
+
+[[exceptions]]
+check = "redundant_error_handling"
+path = "src/mcp_trove_crunchtools/extractor.py"
+justification = "ExtractionError wrapping in _extract_pdf and _extract_docx converts library-specific exceptions (pymupdf, docx) into the unified TroveError hierarchy for consistent error handling upstream."
+
+[[exceptions]]
+check = "verbose_comments"
+path = "src/mcp_trove_crunchtools/extractor.py"
+justification = "Docstrings on public functions (extract_text, detect_file_type, is_supported) are required for MCP tool discoverability."
+
+[[exceptions]]
+check = "verbose_comments"
+path = "src/mcp_trove_crunchtools/server.py"
+justification = "Section separator comments (Search Tools, Index Management, Status Tools) provide navigation in a 150-line tool registration file."
+
+[[exceptions]]
+check = "verbose_comments"
+path = "src/mcp_trove_crunchtools/vision.py"
+justification = "Docstring on get_backend() describes the singleton behavior and None return semantics."
+
+[[exceptions]]
+check = "verbose_comments"
+path = "tests/test_indexer.py"
+justification = "Test docstrings describe test intent for non-obvious assertions."
+
+[[exceptions]]
+check = "verbose_comments"
+path = "tests/test_vision.py"
+justification = "Test docstrings describe test intent for non-obvious assertions."
+
+[[exceptions]]
+check = "generic_names"
+path = "src/mcp_trove_crunchtools/__init__.py"
+justification = "Variable 'result' holds argparse.parse_args() return — standard argparse idiom."
+
+[[exceptions]]
+check = "primitive_obsession"
+path = "tests/conftest.py"
+justification = "10000 modulo seed for deterministic mock embeddings — test fixture constant."
+
+[[exceptions]]
+check = "summary_litter"
+path = "SESSION-CONTEXT.md"
+justification = "Claude Code session context file, not committed to repository."

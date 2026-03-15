@@ -20,7 +20,7 @@ WORKDIR /build
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
 
-RUN pip wheel --no-cache-dir --wheel-dir=/wheels .
+RUN pip wheel --no-cache-dir --wheel-dir=/wheels ".[vision]"
 
 # Stage 2: Runtime image (minimal, no build tools)
 FROM quay.io/hummingbird/python:latest
@@ -40,7 +40,7 @@ LABEL name="mcp-trove-crunchtools" \
 WORKDIR /app
 
 COPY --from=builder /wheels /wheels
-RUN pip install --no-cache-dir --no-index --find-links=/wheels mcp-trove-crunchtools
+RUN pip install --no-cache-dir --no-index --find-links=/wheels "mcp-trove-crunchtools[vision]"
 
 RUN python -c "from mcp_trove_crunchtools import main; print('Installation verified')"
 
