@@ -179,6 +179,18 @@ All code MUST pass `gourmand --full .` with **zero violations** before merge. Go
 - `gourmand-exceptions.toml` — Documented exceptions with justifications
 - `.gourmand-cache/` — Must be in `.gitignore`
 
+### Exception Policy
+
+Exceptions MUST have documented justifications in `gourmand-exceptions.toml`. Acceptable reasons:
+- Standard API patterns (HTTP status codes, pagination params)
+- Test-specific patterns (intentional invalid input)
+- Framework requirements (CLAUDE.md for Claude Code)
+- Database/embedding patterns (vector similarity terms, index configuration)
+
+Unacceptable reasons:
+- "The code is special"
+- "The threshold is too strict"
+
 ---
 
 ## V. Code Quality Gates
