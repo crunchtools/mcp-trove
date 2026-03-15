@@ -112,3 +112,13 @@ justification = "10000 modulo seed for deterministic mock embeddings — test fi
 check = "summary_litter"
 path = "SESSION-CONTEXT.md"
 justification = "Claude Code session context file, not committed to repository."
+
+[[exceptions]]
+check = "single_use_helpers"
+path = "src/mcp_trove_crunchtools/indexer.py"
+justification = "_store_one is called from both index_file (sync) and index_path_async (concurrent loop). _partition_unchanged separates DB-safe checksum checks from thread-unsafe extraction for the async pipeline."
+
+[[exceptions]]
+check = "verbose_comments"
+path = "src/mcp_trove_crunchtools/indexer.py"
+justification = "Phase comments (Phase 1b, Phase 2) document the concurrent pipeline stages for the async indexer."

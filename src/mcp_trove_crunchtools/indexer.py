@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import fnmatch
 import hashlib
-from typing import TYPE_CHECKING
+import logging
+from typing import TYPE_CHECKING, Any
 
 from . import database as db
 
@@ -13,6 +15,8 @@ if TYPE_CHECKING:
 from .config import get_config
 from .embedder import embed_texts
 from .extractor import detect_file_type, extract_text, is_supported
+
+logger = logging.getLogger(__name__)
 
 HASH_BUFFER_SIZE = 65536
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
@@ -31,10 +35,7 @@ def compute_checksum(path: Path) -> str:
 
 
 def chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
-    """Split text into overlapping chunks.
-
-    Returns a list of text chunks with the specified size and overlap.
-    """
+    """Split text into overlapping chunks."""
     if not text.strip():
         return []
 
@@ -58,10 +59,7 @@ def scan_directory(
     directory: Path,
     exclude_patterns: list[str] | None = None,
 ) -> list[Path]:
-    """Scan a directory recursively for supported files.
-
-    Respects exclude patterns and skips hidden directories.
-    """
+    """Scan a directory recursively for supported files."""
     patterns = exclude_patterns or get_config().exclude_patterns
     found: list[Path] = []
 
@@ -81,19 +79,88 @@ def scan_directory(
     return sorted(found)
 
 
-def index_file(path: Path, force: bool = False) -> dict[str, str | int]:
-    """Index a single file: extract text, chunk, embed, store.
-
-    If force=False, skips files whose checksum hasn't changed.
-    Returns a summary dict with path, status, and chunk_count.
-    """
+def _check_unchanged(path: Path) -> tuple[str, int, dict[str, Any] | None]:
+    """Check if a file needs re-extraction (main thread, DB-safe)."""
     resolved = path.resolve()
     checksum = compute_checksum(resolved)
     file_size = resolved.stat().st_size
-
     existing = db.query_one(
         "SELECT id, checksum FROM files WHERE path = ?", (str(resolved),)
     )
+    return checksum, file_size, existing
+
+
+def _extract_one(
+    path: Path, checksum: str, file_size: int, existing_id: int | None
+) -> dict[str, Any]:
+    """Extract text from a single file (phase 1: IO + vision API).
+
+    Called from worker threads — no DB access here.
+    """
+    resolved = path.resolve()
+    text = extract_text(resolved)
+    file_type = detect_file_type(resolved)
+    config = get_config()
+    chunks = chunk_text(text, config.chunk_size, config.chunk_overlap)
+
+    return {
+        "path": str(resolved),
+        "status": "extracted",
+        "file_type": file_type,
+        "checksum": checksum,
+        "file_size": file_size,
+        "chunks": chunks,
+        "existing_id": existing_id,
+    }
+
+
+def _store_one(extraction: dict[str, Any]) -> dict[str, str | int]:
+    """Store extracted content in the database (phase 2: embed + SQLite).
+
+    Takes the output of _extract_one and embeds/stores it.
+    Must run sequentially (SQLite is single-writer).
+    """
+    if extraction["status"] == "skipped":
+        return {
+            "path": extraction["path"],
+            "status": "skipped",
+            "reason": extraction.get("reason", "unchanged"),
+            "chunk_count": 0,
+        }
+
+    path_str = str(extraction["path"])
+    checksum = str(extraction["checksum"])
+    file_type = str(extraction["file_type"])
+    file_size = int(extraction["file_size"])
+    chunks: list[str] = extraction["chunks"]
+    existing_id = extraction.get("existing_id")
+
+    if existing_id is not None:
+        db.delete_file_data(int(existing_id))
+
+    file_id = db.insert_file(path_str, checksum, file_type, file_size)
+
+    if not chunks:
+        db.update_file(file_id, checksum, file_size, 0)
+        return {"path": path_str, "status": "indexed", "chunk_count": 0}
+
+    embeddings = embed_texts(chunks)
+
+    for idx, (chunk_content, embedding) in enumerate(
+        zip(chunks, embeddings, strict=True)
+    ):
+        chunk_id = db.insert_chunk(file_id, idx, chunk_content)
+        db.insert_vector(chunk_id, embedding)
+
+    db.update_file(file_id, checksum, file_size, len(chunks))
+
+    return {"path": path_str, "status": "indexed", "chunk_count": len(chunks)}
+
+
+def index_file(path: Path, force: bool = False) -> dict[str, str | int]:
+    """Index a single file: extract text, chunk, embed, store."""
+    resolved = path.resolve()
+    checksum, file_size, existing = _check_unchanged(resolved)
 
     if existing and existing["checksum"] == checksum and not force:
         return {
@@ -103,37 +170,95 @@ def index_file(path: Path, force: bool = False) -> dict[str, str | int]:
             "chunk_count": 0,
         }
 
-    text = extract_text(resolved)
-    file_type = detect_file_type(resolved)
-    config = get_config()
-    chunks = chunk_text(text, config.chunk_size, config.chunk_overlap)
+    existing_id = existing["id"] if existing else None
+    extraction = _extract_one(resolved, checksum, file_size, existing_id)
+    return _store_one(extraction)
 
-    if existing:
-        db.delete_file_data(existing["id"])
 
-    file_id = db.insert_file(str(resolved), checksum, file_type, file_size)
+def _partition_unchanged(
+    files: list[Path], force: bool,
+) -> tuple[list[dict[str, str | int]], list[tuple[Path, str, int, int | None]]]:
+    """Split files into skipped (unchanged) and needing extraction."""
+    skipped: list[dict[str, str | int]] = []
+    to_extract: list[tuple[Path, str, int, int | None]] = []
+    for fp in files:
+        checksum, file_size, existing = _check_unchanged(fp)
+        if existing and existing["checksum"] == checksum and not force:
+            skipped.append({
+                "path": str(fp.resolve()),
+                "status": "skipped",
+                "reason": "unchanged",
+                "chunk_count": 0,
+            })
+        else:
+            existing_id = existing["id"] if existing else None
+            to_extract.append((fp, checksum, file_size, existing_id))
+    return skipped, to_extract
 
-    if not chunks:
-        db.update_file(file_id, checksum, file_size, 0)
-        return {
-            "path": str(resolved),
-            "status": "indexed",
-            "chunk_count": 0,
-        }
 
-    embeddings = embed_texts(chunks)
+async def index_path_async(
+    path: Path,
+    force: bool = False,
+    batch_limit: int | None = None,
+) -> list[dict[str, str | int]]:
+    """Index a file or directory with concurrent vision extraction.
 
-    for idx, (chunk_content, embedding) in enumerate(zip(chunks, embeddings, strict=True)):
-        chunk_id = db.insert_chunk(file_id, idx, chunk_content)
-        db.insert_vector(chunk_id, embedding)
+    Phase 1 (concurrent): checksum, extract text, call vision API
+    Phase 2 (sequential): embed chunks, store in SQLite
+    """
+    resolved = path.resolve()
 
-    db.update_file(file_id, checksum, file_size, len(chunks))
+    if resolved.is_file():
+        return [index_file(resolved, force=force)]
 
-    return {
-        "path": str(resolved),
-        "status": "indexed",
-        "chunk_count": len(chunks),
-    }
+    if not resolved.is_dir():
+        return []
+
+    files = scan_directory(resolved)
+    if batch_limit is not None:
+        files = files[:batch_limit]
+
+    if not files:
+        return []
+
+    results, to_extract = _partition_unchanged(files, force)
+
+    if not to_extract:
+        return results
+
+    # Phase 1b: extract text concurrently (vision API calls, no DB)
+    workers = get_config().index_workers
+    semaphore = asyncio.Semaphore(workers)
+
+    async def extract_bounded(
+        file_path: Path, cs: str, fs: int, eid: int | None,
+    ) -> dict[str, Any]:
+        async with semaphore:
+            return await asyncio.to_thread(_extract_one, file_path, cs, fs, eid)
+
+    logger.info(
+        "Extracting %d files with %d concurrent workers",
+        len(to_extract), workers,
+    )
+    extractions = await asyncio.gather(
+        *(extract_bounded(fp, cs, fs, eid) for fp, cs, fs, eid in to_extract),
+        return_exceptions=True,
+    )
+
+    # Phase 2: embed + store sequentially (SQLite single-writer)
+    for idx, raw in enumerate(extractions):
+        if isinstance(raw, BaseException):
+            logger.warning("Failed to extract %s: %s", to_extract[idx][0], raw)
+            results.append({
+                "path": str(to_extract[idx][0]),
+                "status": "error",
+                "reason": str(raw),
+                "chunk_count": 0,
+            })
+            continue
+        results.append(_store_one(raw))
+
+    return results
 
 
 def index_path(
@@ -141,34 +266,23 @@ def index_path(
     force: bool = False,
     batch_limit: int | None = None,
 ) -> list[dict[str, str | int]]:
-    """Index a file or directory.
-
-    For directories, scans recursively and indexes supported files.
-    Respects batch_limit to cap the number of files processed.
-    """
+    """Synchronous wrapper for index_path_async."""
     resolved = path.resolve()
-    results: list[dict[str, str | int]] = []
 
     if resolved.is_file():
-        results.append(index_file(resolved, force=force))
-        return results
+        return [index_file(resolved, force=force)]
 
-    if resolved.is_dir():
-        files = scan_directory(resolved)
-        if batch_limit is not None:
-            files = files[:batch_limit]
-        for file_path in files:
-            results.append(index_file(file_path, force=force))
-        return results
+    if not resolved.is_dir():
+        return []
 
-    return results
+    files = scan_directory(resolved)
+    if batch_limit is not None:
+        files = files[:batch_limit]
+    return [index_file(fp, force=force) for fp in files]
 
 
 def remove_path(path: Path) -> dict[str, str | int]:
-    """Remove a file or directory from the index.
-
-    For directories, removes all files under that path prefix.
-    """
+    """Remove a file or directory from the index."""
     resolved = path.resolve()
     resolved_str = str(resolved)
 

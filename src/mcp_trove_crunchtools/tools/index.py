@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ..errors import PathNotFoundError
-from ..indexer import index_path, remove_path
+from ..indexer import index_path_async, remove_path
 
 
 async def trove_index(path: str) -> dict[str, Any]:
@@ -19,7 +19,7 @@ async def trove_index(path: str) -> dict[str, Any]:
     if not target.exists():
         raise PathNotFoundError(path)
 
-    results = index_path(target, force=False)
+    results = await index_path_async(target, force=False)
 
     indexed = sum(1 for r in results if r["status"] == "indexed")
     skipped = sum(1 for r in results if r["status"] == "skipped")
@@ -45,14 +45,14 @@ async def trove_reindex(path: str | None = None) -> dict[str, Any]:
         target = Path(path).resolve()
         if not target.exists():
             raise PathNotFoundError(path)
-        results = index_path(target, force=True)
+        results = await index_path_async(target, force=True)
     else:
         all_files = db.query("SELECT path FROM files")
         results = []
         for row in all_files:
             file_path = Path(row["path"])
             if file_path.exists():
-                results.extend(index_path(file_path, force=True))
+                results.extend(await index_path_async(file_path, force=True))
             else:
                 existing = db.query_one(
                     "SELECT id FROM files WHERE path = ?", (row["path"],)
