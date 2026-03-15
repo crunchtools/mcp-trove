@@ -39,6 +39,8 @@ LABEL name="mcp-trove-crunchtools" \
 
 WORKDIR /app
 
+# libstdc++ from Hummingbird builder (not Fedora — different glibc)
+COPY --from=quay.io/hummingbird/python:latest-builder /usr/lib64/libstdc++.so.6* /usr/lib64/
 COPY --from=builder /wheels /wheels
 RUN pip install --no-cache-dir --no-index --find-links=/wheels "mcp-trove-crunchtools[vision]"
 
