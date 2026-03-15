@@ -11,10 +11,11 @@
 #   claude mcp add mcp-trove-crunchtools \
 #     -- podman run -i --rm -v trove-data:/data -v ~/Documents:/docs:ro quay.io/crunchtools/mcp-trove
 
-# Stage 1: Build wheels (needs gcc for py-rust-stemmers on Python 3.14)
-FROM registry.fedoraproject.org/fedora:44 AS builder
+# Stage 1: Build wheels (Hummingbird builder — same ecosystem as runtime)
+FROM quay.io/hummingbird/python:latest-builder AS builder
 
-RUN dnf install -y python3 python3-pip gcc && dnf clean all
+USER root
+RUN dnf install -y gcc && dnf clean all
 
 WORKDIR /build
 COPY pyproject.toml README.md ./
