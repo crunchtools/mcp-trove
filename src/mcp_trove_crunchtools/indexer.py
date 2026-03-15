@@ -155,8 +155,9 @@ def index_path(
 
     if resolved.is_dir():
         files = scan_directory(resolved)
-        limit = batch_limit or get_config().index_batch
-        for file_path in files[:limit]:
+        if batch_limit is not None:
+            files = files[:batch_limit]
+        for file_path in files:
             results.append(index_file(file_path, force=force))
         return results
 
