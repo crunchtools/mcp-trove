@@ -26,7 +26,7 @@ RUN pip wheel --no-cache-dir --wheel-dir=/wheels ".[vision]"
 FROM quay.io/hummingbird/python:latest
 
 LABEL name="mcp-trove-crunchtools" \
-      version="0.1.0" \
+      version="0.2.0" \
       summary="Self-hosted local file indexing MCP server with semantic search" \
       description="Index local directories and search over contents using hybrid vector + keyword search" \
       maintainer="crunchtools.com" \
