@@ -57,6 +57,20 @@ CREATE TRIGGER IF NOT EXISTS chunks_fts_au AFTER UPDATE ON chunks BEGIN
     INSERT INTO chunks_fts(rowid, content)
     VALUES (new.id, new.content);
 END;
+
+CREATE TABLE IF NOT EXISTS index_runs (
+    id INTEGER PRIMARY KEY,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    finished_at TEXT,
+    path TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    files_found INTEGER NOT NULL DEFAULT 0,
+    files_indexed INTEGER NOT NULL DEFAULT 0,
+    files_skipped INTEGER NOT NULL DEFAULT 0,
+    files_errored INTEGER NOT NULL DEFAULT 0,
+    total_chunks INTEGER NOT NULL DEFAULT 0,
+    error_message TEXT
+);
 """
 
 VEC_TABLE_SQL = f"""
@@ -265,4 +279,38 @@ def get_file_chunks_avg_embedding(file_id: int) -> list[dict[str, Any]]:
         WHERE c.file_id = ?
         """,
         (file_id,),
+    )
+
+
+def start_run(path: str, files_found: int) -> int:
+    """Record the start of an indexing run. Returns the run ID."""
+    return execute(
+        "INSERT INTO index_runs (path, files_found) VALUES (?, ?)",
+        (path, files_found),
+    )
+
+
+def finish_run(
+    run_id: int,
+    *,
+    files_indexed: int,
+    files_skipped: int,
+    files_errored: int,
+    total_chunks: int,
+) -> None:
+    """Mark an indexing run as completed with final counts."""
+    execute(
+        "UPDATE index_runs SET finished_at = datetime('now'), status = 'completed', "
+        "files_indexed = ?, files_skipped = ?, files_errored = ?, total_chunks = ? "
+        "WHERE id = ?",
+        (files_indexed, files_skipped, files_errored, total_chunks, run_id),
+    )
+
+
+def log_run_error(run_id: int, error_message: str) -> None:
+    """Mark an indexing run as failed with an error message."""
+    execute(
+        "UPDATE index_runs SET finished_at = datetime('now'), status = 'failed', "
+        "error_message = ? WHERE id = ?",
+        (error_message, run_id),
     )

@@ -8,6 +8,16 @@ from typing import Any
 from ..errors import PathNotFoundError
 from ..indexer import index_path_async, remove_path
 
+# Above this threshold, only errors are included in details (not every file)
+_DETAIL_CAP = 200
+
+
+def _cap_details(results: list[dict[str, str | int]]) -> list[dict[str, str | int]]:
+    """Return full details for small runs, errors-only for large ones."""
+    if len(results) <= _DETAIL_CAP:
+        return results
+    return [r for r in results if r.get("status") == "error"]
+
 
 async def trove_index(path: str) -> dict[str, Any]:
     """Index a specific file or directory.
@@ -23,15 +33,22 @@ async def trove_index(path: str) -> dict[str, Any]:
 
     indexed = sum(1 for r in results if r["status"] == "indexed")
     skipped = sum(1 for r in results if r["status"] == "skipped")
+    errored = sum(1 for r in results if r["status"] == "error")
     total_chunks = sum(int(r.get("chunk_count", 0)) for r in results)
 
-    return {
+    response: dict[str, Any] = {
         "path": str(target),
         "files_indexed": indexed,
         "files_skipped": skipped,
+        "files_errored": errored,
         "total_chunks": total_chunks,
-        "details": results,
+        "details": _cap_details(results),
     }
+    if len(results) > _DETAIL_CAP:
+        response["details_note"] = (
+            f"Large run ({len(results)} files) — details limited to errors only"
+        )
+    return response
 
 
 async def trove_reindex(path: str | None = None) -> dict[str, Any]:
@@ -68,14 +85,21 @@ async def trove_reindex(path: str | None = None) -> dict[str, Any]:
 
     indexed = sum(1 for r in results if r["status"] == "indexed")
     removed = sum(1 for r in results if r.get("status") == "removed")
+    errored = sum(1 for r in results if r.get("status") == "error")
     total_chunks = sum(int(r.get("chunk_count", 0)) for r in results)
 
-    return {
+    response: dict[str, Any] = {
         "files_reindexed": indexed,
         "files_removed": removed,
+        "files_errored": errored,
         "total_chunks": total_chunks,
-        "details": results,
+        "details": _cap_details(results),
     }
+    if len(results) > _DETAIL_CAP:
+        response["details_note"] = (
+            f"Large run ({len(results)} files) — details limited to errors only"
+        )
+    return response
 
 
 async def trove_remove(path: str) -> dict[str, Any]:

@@ -47,7 +47,12 @@ RUN pip install --no-cache-dir --no-index --find-links=/wheels "mcp-trove-crunch
 
 RUN python -c "from mcp_trove_crunchtools import main; print('Installation verified')"
 
+# Pre-download the embedding model so it's baked into the image (no HF fetch at runtime)
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='BAAI/bge-small-en-v1.5')" \
+    && echo "Embedding model cached"
+
 ENV TROVE_DB=/tmp/trove-data/trove.db
+ENV OMP_NUM_THREADS=4
 
 EXPOSE 8020
 ENTRYPOINT ["python", "-m", "mcp_trove_crunchtools"]

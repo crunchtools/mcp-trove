@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import logging
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from .config import get_config
 from .errors import ExtractionError
@@ -44,24 +44,39 @@ class GeminiBackend:
     def __init__(self, model: str, prompt: str) -> None:
         self._model = model
         self._prompt = prompt
+        self._client: Any = None
 
-    def caption(self, path: Path, file_type: str) -> str:
-        _ = file_type
+    def _get_client(self) -> Any:
+        """Get or create the Gemini client (lazy, reused across calls)."""
+        if self._client is not None:
+            return self._client
+
         try:
             from google import genai
-            from google.genai import types
         except ImportError as exc:
             raise ExtractionError(
-                str(path), "google-genai not installed (pip install google-genai)"
+                "GeminiBackend", "google-genai not installed (pip install google-genai)"
             ) from exc
 
         import os
 
         api_key = os.environ.get("GEMINI_API_KEY", "")
         if not api_key:
-            raise ExtractionError(str(path), "GEMINI_API_KEY not set")
+            raise ExtractionError("GeminiBackend", "GEMINI_API_KEY not set")
 
-        client = genai.Client(api_key=api_key)
+        self._client = genai.Client(api_key=api_key)
+        return self._client
+
+    def caption(self, path: Path, file_type: str) -> str:
+        _ = file_type
+        try:
+            from google.genai import types
+        except ImportError as exc:
+            raise ExtractionError(
+                str(path), "google-genai not installed (pip install google-genai)"
+            ) from exc
+
+        client = self._get_client()
         mime = _get_mime(path)
         file_bytes = path.read_bytes()
 
@@ -84,25 +99,34 @@ class OpenAIBackend:
     def __init__(self, model: str, prompt: str) -> None:
         self._model = model
         self._prompt = prompt
+        self._client: Any = None
 
-    def caption(self, path: Path, file_type: str) -> str:
-        if file_type == "video":
-            raise ExtractionError(str(path), "OpenAI vision does not support video files")
+    def _get_client(self) -> Any:
+        """Get or create the OpenAI client (lazy, reused across calls)."""
+        if self._client is not None:
+            return self._client
 
         try:
             import openai
         except ImportError as exc:
             raise ExtractionError(
-                str(path), "openai not installed (pip install openai)"
+                "OpenAIBackend", "openai not installed (pip install openai)"
             ) from exc
 
         import os
 
         api_key = os.environ.get("OPENAI_API_KEY", "")
         if not api_key:
-            raise ExtractionError(str(path), "OPENAI_API_KEY not set")
+            raise ExtractionError("OpenAIBackend", "OPENAI_API_KEY not set")
 
-        client = openai.OpenAI(api_key=api_key)
+        self._client = openai.OpenAI(api_key=api_key)
+        return self._client
+
+    def caption(self, path: Path, file_type: str) -> str:
+        if file_type == "video":
+            raise ExtractionError(str(path), "OpenAI vision does not support video files")
+
+        client = self._get_client()
         mime = _get_mime(path)
         b64 = base64.b64encode(path.read_bytes()).decode("ascii")
         image_url = f"data:{mime};base64,{b64}"

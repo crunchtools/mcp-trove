@@ -29,6 +29,13 @@ async def trove_status() -> dict[str, Any]:
         "SELECT indexed_at FROM files ORDER BY indexed_at DESC LIMIT 1"
     )
 
+    last_run = db.query_one(
+        "SELECT id, started_at, finished_at, path, status, "
+        "files_found, files_indexed, files_skipped, files_errored, "
+        "total_chunks, error_message "
+        "FROM index_runs ORDER BY id DESC LIMIT 1"
+    )
+
     return {
         "total_files": file_stats["total_files"] if file_stats else 0,
         "total_chunks": file_stats["total_chunks"] if file_stats else 0,
@@ -39,6 +46,7 @@ async def trove_status() -> dict[str, Any]:
         "chunk_overlap": config.chunk_overlap,
         "database_path": config.db_path,
         "last_indexed": last_indexed["indexed_at"] if last_indexed else None,
+        "last_run": dict(last_run) if last_run else None,
     }
 
 
@@ -73,6 +81,18 @@ async def trove_list(
         }
         for row in files
     ]
+
+
+async def trove_log(limit: int = 20) -> list[dict[str, Any]]:
+    """Return recent index runs from the activity log."""
+    rows = db.query(
+        "SELECT id, started_at, finished_at, path, status, "
+        "files_found, files_indexed, files_skipped, files_errored, "
+        "total_chunks, error_message "
+        "FROM index_runs ORDER BY id DESC LIMIT ?",
+        (limit,),
+    )
+    return [dict(row) for row in rows]
 
 
 async def trove_get_chunks(

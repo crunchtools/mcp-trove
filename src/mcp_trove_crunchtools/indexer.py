@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from . import database as db
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 from .config import get_config
 from .embedder import embed_texts
@@ -20,6 +21,14 @@ logger = logging.getLogger(__name__)
 
 HASH_BUFFER_SIZE = 65536
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+
+_T = Any  # generic element type for _batched
+
+
+def _batched(iterable: list[_T], n: int) -> Iterator[list[_T]]:
+    """Yield successive n-sized chunks from a list."""
+    for i in range(0, len(iterable), n):
+        yield iterable[i : i + n]
 
 
 def compute_checksum(path: Path) -> str:
@@ -160,19 +169,36 @@ def _store_one(extraction: dict[str, Any]) -> dict[str, str | int]:
 def index_file(path: Path, force: bool = False) -> dict[str, str | int]:
     """Index a single file: extract text, chunk, embed, store."""
     resolved = path.resolve()
-    checksum, file_size, existing = _check_unchanged(resolved)
+    run_id = db.start_run(str(resolved), 1)
+    try:
+        checksum, file_size, existing = _check_unchanged(resolved)
 
-    if existing and existing["checksum"] == checksum and not force:
-        return {
-            "path": str(resolved),
-            "status": "skipped",
-            "reason": "unchanged",
-            "chunk_count": 0,
-        }
-
-    existing_id = existing["id"] if existing else None
-    extraction = _extract_one(resolved, checksum, file_size, existing_id)
-    return _store_one(extraction)
+        if existing and existing["checksum"] == checksum and not force:
+            db.finish_run(
+                run_id,
+                files_indexed=0, files_skipped=1,
+                files_errored=0, total_chunks=0,
+            )
+            result: dict[str, str | int] = {
+                "path": str(resolved),
+                "status": "skipped",
+                "reason": "unchanged",
+                "chunk_count": 0,
+            }
+        else:
+            existing_id = existing["id"] if existing else None
+            extraction = _extract_one(resolved, checksum, file_size, existing_id)
+            result = _store_one(extraction)
+            db.finish_run(
+                run_id,
+                files_indexed=1, files_skipped=0,
+                files_errored=0,
+                total_chunks=int(result.get("chunk_count", 0)),
+            )
+    except Exception as exc:
+        db.log_run_error(run_id, str(exc))
+        raise
+    return result
 
 
 def _partition_unchanged(
@@ -194,6 +220,62 @@ def _partition_unchanged(
             existing_id = existing["id"] if existing else None
             to_extract.append((fp, checksum, file_size, existing_id))
     return skipped, to_extract
+
+
+async def _extract_and_store_batched(
+    to_extract: list[tuple[Path, str, int, int | None]],
+    results: list[dict[str, str | int]],
+) -> None:
+    """Extract files in batches, storing each batch before starting the next.
+
+    This bounds memory usage: only one batch of extracted text lives in memory
+    at a time, instead of accumulating all extractions via a single gather.
+    """
+    config = get_config()
+    workers = config.index_workers
+    batch_size = config.index_batch
+    semaphore = asyncio.Semaphore(workers)
+
+    async def extract_bounded(
+        file_path: Path, cs: str, fs: int, eid: int | None,
+    ) -> dict[str, Any]:
+        async with semaphore:
+            return await asyncio.to_thread(
+                _extract_one, file_path, cs, fs, eid,
+            )
+
+    logger.info(
+        "Extracting %d files with %d workers in batches of %d",
+        len(to_extract), workers, batch_size,
+    )
+
+    for batch_num, chunk in enumerate(_batched(to_extract, batch_size)):
+        logger.info(
+            "Batch %d: extracting %d files", batch_num + 1, len(chunk),
+        )
+        extractions = await asyncio.gather(
+            *(
+                extract_bounded(fp, cs, fs, eid)
+                for fp, cs, fs, eid in chunk
+            ),
+            return_exceptions=True,
+        )
+
+        # Store this batch immediately, then free extraction data
+        for idx, raw in enumerate(extractions):
+            if isinstance(raw, BaseException):
+                logger.warning(
+                    "Failed to extract %s: %s", chunk[idx][0], raw,
+                )
+                results.append({
+                    "path": str(chunk[idx][0]),
+                    "status": "error",
+                    "reason": str(raw),
+                    "chunk_count": 0,
+                })
+                continue
+            results.append(_store_one(raw))
+        del extractions
 
 
 async def index_path_async(
@@ -221,43 +303,25 @@ async def index_path_async(
     if not files:
         return []
 
-    results, to_extract = _partition_unchanged(files, force)
+    run_id = db.start_run(str(resolved), len(files))
+    try:
+        results, to_extract = _partition_unchanged(files, force)
 
-    if not to_extract:
-        return results
+        if to_extract:
+            await _extract_and_store_batched(to_extract, results)
 
-    # Phase 1b: extract text concurrently (vision API calls, no DB)
-    workers = get_config().index_workers
-    semaphore = asyncio.Semaphore(workers)
-
-    async def extract_bounded(
-        file_path: Path, cs: str, fs: int, eid: int | None,
-    ) -> dict[str, Any]:
-        async with semaphore:
-            return await asyncio.to_thread(_extract_one, file_path, cs, fs, eid)
-
-    logger.info(
-        "Extracting %d files with %d concurrent workers",
-        len(to_extract), workers,
-    )
-    extractions = await asyncio.gather(
-        *(extract_bounded(fp, cs, fs, eid) for fp, cs, fs, eid in to_extract),
-        return_exceptions=True,
-    )
-
-    # Phase 2: embed + store sequentially (SQLite single-writer)
-    for idx, raw in enumerate(extractions):
-        if isinstance(raw, BaseException):
-            logger.warning("Failed to extract %s: %s", to_extract[idx][0], raw)
-            results.append({
-                "path": str(to_extract[idx][0]),
-                "status": "error",
-                "reason": str(raw),
-                "chunk_count": 0,
-            })
-            continue
-        results.append(_store_one(raw))
-
+        indexed = sum(1 for r in results if r["status"] == "indexed")
+        skipped = sum(1 for r in results if r["status"] == "skipped")
+        errored = sum(1 for r in results if r["status"] == "error")
+        total_chunks = sum(int(r.get("chunk_count", 0)) for r in results)
+        db.finish_run(
+            run_id,
+            files_indexed=indexed, files_skipped=skipped,
+            files_errored=errored, total_chunks=total_chunks,
+        )
+    except Exception as exc:
+        db.log_run_error(run_id, str(exc))
+        raise
     return results
 
 

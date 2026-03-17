@@ -10,6 +10,7 @@ from .tools import (
     trove_get_chunks,
     trove_index,
     trove_list,
+    trove_log,
     trove_reindex,
     trove_remove,
     trove_search,
@@ -122,6 +123,21 @@ async def trove_status_tool() -> dict[str, Any]:
     chunk counts, file types breakdown, and configuration details.
     """
     return await trove_status()
+
+
+@mcp.tool()
+async def trove_log_tool(
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Activity log of indexing runs.
+
+    Shows recent indexing operations with start/finish times, file counts,
+    and error messages. Persisted in SQLite so it survives container crashes.
+
+    Args:
+        limit: Maximum runs to return (1-500, default: 20)
+    """
+    return await trove_log(limit)
 
 
 @mcp.tool()

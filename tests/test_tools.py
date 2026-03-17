@@ -11,12 +11,12 @@ import pytest
 from mcp_trove_crunchtools.server import mcp
 from mcp_trove_crunchtools.tools.index import trove_index, trove_reindex, trove_remove
 from mcp_trove_crunchtools.tools.search import trove_search, trove_similar
-from mcp_trove_crunchtools.tools.status import trove_get_chunks, trove_list, trove_status
+from mcp_trove_crunchtools.tools.status import trove_get_chunks, trove_list, trove_log, trove_status
 
 if TYPE_CHECKING:
     import sqlite3
 
-EXPECTED_TOOL_COUNT = 8
+EXPECTED_TOOL_COUNT = 9
 
 
 class TestToolCount:
@@ -252,3 +252,42 @@ class TestStatusTools:
 
         with pytest.raises(FileNotIndexedError):
             await trove_get_chunks("/nonexistent/file.txt")
+
+    @pytest.mark.asyncio
+    async def test_log_empty(self, in_memory_db: sqlite3.Connection) -> None:
+        logs = await trove_log()
+        assert logs == []
+
+    @pytest.mark.asyncio
+    async def test_log_after_index(self, in_memory_db: sqlite3.Connection) -> None:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False
+        ) as f:
+            f.write("Log test content for indexing.")
+            path = f.name
+
+        await trove_index(path)
+        logs = await trove_log()
+        assert len(logs) >= 1
+        latest = logs[0]
+        assert latest["status"] == "completed"
+        assert latest["files_indexed"] == 1
+        assert latest["files_errored"] == 0
+        assert latest["error_message"] is None
+
+        Path(path).unlink()
+
+    @pytest.mark.asyncio
+    async def test_status_includes_last_run(self, in_memory_db: sqlite3.Connection) -> None:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False
+        ) as f:
+            f.write("Last run test content.")
+            path = f.name
+
+        await trove_index(path)
+        status = await trove_status()
+        assert status["last_run"] is not None
+        assert status["last_run"]["status"] == "completed"
+
+        Path(path).unlink()
