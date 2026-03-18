@@ -8,7 +8,6 @@ from typing import Any
 from ..errors import PathNotFoundError
 from ..indexer import index_path_async, remove_path
 
-# Above this threshold, only errors are included in details (not every file)
 _DETAIL_CAP = 200
 
 
