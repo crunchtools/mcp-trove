@@ -20,7 +20,7 @@ from .tools import (
 
 mcp = FastMCP(
     "mcp-trove-crunchtools",
-    version="0.2.0",
+    version="0.3.0",
     instructions=(
         "Self-hosted local file indexing MCP server with semantic search. "
         "Index any local directory and search over contents using hybrid "
