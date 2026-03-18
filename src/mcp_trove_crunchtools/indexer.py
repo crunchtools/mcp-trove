@@ -179,7 +179,7 @@ def index_file(path: Path, force: bool = False) -> dict[str, str | int]:
                 files_indexed=0, files_skipped=1,
                 files_errored=0, total_chunks=0,
             )
-            result: dict[str, str | int] = {
+            file_status: dict[str, str | int] = {
                 "path": str(resolved),
                 "status": "skipped",
                 "reason": "unchanged",
@@ -188,17 +188,17 @@ def index_file(path: Path, force: bool = False) -> dict[str, str | int]:
         else:
             existing_id = existing["id"] if existing else None
             extraction = _extract_one(resolved, checksum, file_size, existing_id)
-            result = _store_one(extraction)
+            file_status = _store_one(extraction)
             db.finish_run(
                 run_id,
                 files_indexed=1, files_skipped=0,
                 files_errored=0,
-                total_chunks=int(result.get("chunk_count", 0)),
+                total_chunks=int(file_status.get("chunk_count", 0)),
             )
     except Exception as exc:
         db.log_run_error(run_id, str(exc))
         raise
-    return result
+    return file_status
 
 
 def _partition_unchanged(
