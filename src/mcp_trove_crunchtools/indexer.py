@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import ctypes
 import fnmatch
+import gc
 import hashlib
 import logging
 from typing import TYPE_CHECKING, Any
@@ -276,6 +279,13 @@ async def _extract_and_store_batched(
                 continue
             results.append(_store_one(raw))
         del extractions
+
+        # Force Python to release memory back to the OS.
+        # CPython's pymalloc keeps freed pages; gc.collect() breaks
+        # cycles, then malloc_trim returns free heap pages to the OS.
+        gc.collect()
+        with contextlib.suppress(OSError):
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
 
 
 async def index_path_async(
