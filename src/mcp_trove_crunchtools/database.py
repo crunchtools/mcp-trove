@@ -184,6 +184,14 @@ def update_file(
     )
 
 
+def update_file_mtime(file_id: int, mtime: float) -> None:
+    """Backfill mtime on an unchanged file so the fast-skip works next run."""
+    execute(
+        "UPDATE files SET mtime = ? WHERE id = ?",
+        (mtime, file_id),
+    )
+
+
 def delete_file_data(file_id: int) -> None:
     """Delete all chunks and vectors for a file, then the file record."""
     db = get_db()
@@ -312,6 +320,22 @@ def start_run(path: str, files_found: int) -> int:
     return execute(
         "INSERT INTO index_runs (path, files_found) VALUES (?, ?)",
         (path, files_found),
+    )
+
+
+def update_run_progress(
+    run_id: int,
+    *,
+    files_indexed: int,
+    files_skipped: int,
+    files_errored: int,
+    total_chunks: int,
+) -> None:
+    """Update live progress counters on a running index run."""
+    execute(
+        "UPDATE index_runs SET files_indexed = ?, files_skipped = ?, "
+        "files_errored = ?, total_chunks = ? WHERE id = ?",
+        (files_indexed, files_skipped, files_errored, total_chunks, run_id),
     )
 
 

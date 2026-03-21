@@ -16,6 +16,7 @@ DEFAULT_CHUNK_SIZE = 1000
 DEFAULT_CHUNK_OVERLAP = 200
 DEFAULT_INDEX_WORKERS = 20
 DEFAULT_INDEX_BATCH = 50
+DEFAULT_VISION_TIMEOUT = 120  # seconds per vision API call
 DEFAULT_EXCLUDE_PATTERNS = (
     "*.iso,*.zip,*.tar.gz,*.tar.bz2,*.7z,*.rar,"
     "*.exe,*.dll,*.bin,*.dat"
@@ -71,6 +72,9 @@ class Config:
         )
         self.vision_prompt: str = os.environ.get(
             "TROVE_VISION_PROMPT", DEFAULT_VISION_PROMPT
+        )
+        self.vision_timeout: int = int(
+            os.environ.get("TROVE_VISION_TIMEOUT", str(DEFAULT_VISION_TIMEOUT))
         )
 
     def _default_vision_model(self) -> str:

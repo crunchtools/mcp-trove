@@ -64,7 +64,11 @@ class GeminiBackend:
         if not api_key:
             raise ExtractionError("GeminiBackend", "GEMINI_API_KEY not set")
 
-        self._client = genai.Client(api_key=api_key)
+        timeout_s = get_config().vision_timeout
+        self._client = genai.Client(
+            api_key=api_key,
+            http_options={"timeout": timeout_s * 1000},
+        )
         return self._client
 
     def caption(self, path: Path, file_type: str) -> str:
@@ -86,10 +90,13 @@ class GeminiBackend:
                 types.Part.from_text(text=self._prompt),
             ]
         )
-        response = client.models.generate_content(
-            model=self._model,
-            contents=content,
-        )
+        try:
+            response = client.models.generate_content(
+                model=self._model,
+                contents=content,
+            )
+        except Exception as exc:
+            raise ExtractionError(str(path), str(exc)) from exc
         if response.text:
             return str(response.text)
         raise ExtractionError(str(path), "Gemini returned empty response")
@@ -131,19 +138,23 @@ class OpenAIBackend:
         b64 = base64.b64encode(path.read_bytes()).decode("ascii")
         image_url = f"data:{mime};base64,{b64}"
 
-        response = client.chat.completions.create(
-            model=self._model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": self._prompt},
-                        {"type": "image_url", "image_url": {"url": image_url}},
-                    ],
-                }
-            ],
-            max_tokens=300,
-        )
+        try:
+            response = client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": self._prompt},
+                            {"type": "image_url", "image_url": {"url": image_url}},
+                        ],
+                    }
+                ],
+                max_tokens=300,
+                timeout=get_config().vision_timeout,
+            )
+        except Exception as exc:
+            raise ExtractionError(str(path), str(exc)) from exc
         response_text = response.choices[0].message.content
         if response_text:
             return str(response_text)

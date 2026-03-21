@@ -207,6 +207,8 @@ def index_file(path: Path, force: bool = False) -> dict[str, str | int]:
         checksum, file_size, mtime, existing = _check_unchanged(resolved)
 
         if existing and existing["checksum"] == checksum and not force:
+            if existing["mtime"] is None:
+                db.update_file_mtime(existing["id"], mtime)
             db.finish_run(
                 run_id,
                 files_indexed=0, files_skipped=1,
@@ -248,6 +250,9 @@ def _partition_unchanged(
     for fp in files:
         checksum, file_size, mtime, existing = _check_unchanged(fp)
         if existing and existing["checksum"] == checksum and not force:
+            # Backfill mtime if DB has NULL so fast-skip works next run
+            if existing["mtime"] is None:
+                db.update_file_mtime(existing["id"], mtime)
             skipped.append({
                 "path": str(fp.resolve()),
                 "status": "skipped",
@@ -274,14 +279,18 @@ async def _extract_and_store_batched(
     workers = config.index_workers
     batch_size = config.index_batch
     semaphore = asyncio.Semaphore(workers)
+    # Safety-net timeout: 3x the per-call vision timeout to allow for
+    # EXIF extraction + file read + API call, but prevent infinite hangs.
+    extract_timeout = config.vision_timeout * 3
 
     async def extract_bounded(
         file_path: Path, cs: str, fs: int, eid: int | None, mt: float,
     ) -> dict[str, Any]:
         async with semaphore:
-            return await asyncio.to_thread(
-                _extract_one, file_path, cs, fs, eid, mt,
-            )
+            async with asyncio.timeout(extract_timeout):
+                return await asyncio.to_thread(
+                    _extract_one, file_path, cs, fs, eid, mt,
+                )
 
     logger.info(
         "Extracting %d files with %d workers in batches of %d",
@@ -321,6 +330,24 @@ async def _extract_and_store_batched(
             results.append(_store_one(raw))
         del extractions
 
+        # Update live progress after each batch
+        if run_id is not None:
+            db.update_run_progress(
+                run_id,
+                files_indexed=sum(
+                    1 for r in results if r["status"] == "indexed"
+                ),
+                files_skipped=sum(
+                    1 for r in results if r["status"] == "skipped"
+                ),
+                files_errored=sum(
+                    1 for r in results if r["status"] == "error"
+                ),
+                total_chunks=sum(
+                    int(r.get("chunk_count", 0)) for r in results
+                ),
+            )
+
         # Force Python to release memory back to the OS.
         # CPython's pymalloc keeps freed pages; gc.collect() breaks
         # cycles, then malloc_trim returns free heap pages to the OS.
@@ -357,6 +384,16 @@ async def index_path_async(
     run_id = db.start_run(str(resolved), len(files))
     try:
         results, to_extract = _partition_unchanged(files, force)
+
+        # Record skipped count immediately so status queries see progress
+        if results:
+            db.update_run_progress(
+                run_id,
+                files_indexed=0,
+                files_skipped=len(results),
+                files_errored=0,
+                total_chunks=0,
+            )
 
         if to_extract:
             await _extract_and_store_batched(to_extract, results, run_id)
