@@ -11,6 +11,7 @@ from .tools import (
     trove_index,
     trove_list,
     trove_log,
+    trove_quality,
     trove_reindex,
     trove_remove,
     trove_search,
@@ -172,3 +173,23 @@ async def trove_get_chunks_tool(
         limit: Maximum chunks to return (1-500, default: 50)
     """
     return await trove_get_chunks(file_path, limit)
+
+
+@mcp.tool()
+async def trove_quality_tool(
+    path: str | None = None,
+    show_resolved: bool = False,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Per-file error tracking from indexing runs.
+
+    Shows which files failed, why, and whether they were resolved on a
+    subsequent successful index. Use this to find files worth retrying
+    via trove_reindex.
+
+    Args:
+        path: Optional path prefix to filter errors
+        show_resolved: Include resolved errors (default: False)
+        limit: Maximum error records to return (1-500, default: 100)
+    """
+    return await trove_quality(path, show_resolved, limit)

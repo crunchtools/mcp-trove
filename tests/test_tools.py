@@ -11,12 +11,18 @@ import pytest
 from mcp_trove_crunchtools.server import mcp
 from mcp_trove_crunchtools.tools.index import trove_index, trove_reindex, trove_remove
 from mcp_trove_crunchtools.tools.search import trove_search, trove_similar
-from mcp_trove_crunchtools.tools.status import trove_get_chunks, trove_list, trove_log, trove_status
+from mcp_trove_crunchtools.tools.status import (
+    trove_get_chunks,
+    trove_list,
+    trove_log,
+    trove_quality,
+    trove_status,
+)
 
 if TYPE_CHECKING:
     import sqlite3
 
-EXPECTED_TOOL_COUNT = 9
+EXPECTED_TOOL_COUNT = 10
 
 
 class TestToolCount:
@@ -291,3 +297,45 @@ class TestStatusTools:
         assert status["last_run"]["status"] == "completed"
 
         Path(path).unlink()
+
+    @pytest.mark.asyncio
+    async def test_quality_empty(self, in_memory_db: sqlite3.Connection) -> None:
+        result = await trove_quality()
+        assert result["total_errors"] == 0
+        assert result["unresolved"] == 0
+        assert result["resolved"] == 0
+        assert result["by_type"] == {}
+        assert result["errors"] == []
+
+    @pytest.mark.asyncio
+    async def test_quality_after_error(self, in_memory_db: sqlite3.Connection) -> None:
+        from mcp_trove_crunchtools import database as test_db
+
+        run_id = test_db.start_run("/nonexistent/test", 1)
+        test_db.insert_error(
+            run_id, "/nonexistent/test/bad.pdf",
+            "connection reset by peer", "transient",
+        )
+        test_db.insert_error(
+            run_id, "/nonexistent/test/corrupt.pdf",
+            "invalid PDF structure", "permanent",
+        )
+
+        result = await trove_quality()
+        assert result["total_errors"] == 2
+        assert result["unresolved"] == 2
+        assert result["resolved"] == 0
+        assert result["by_type"]["transient"] == 1
+        assert result["by_type"]["permanent"] == 1
+        assert len(result["errors"]) == 2
+
+        # Resolve one error and verify
+        test_db.resolve_errors("/nonexistent/test/bad.pdf")
+        result = await trove_quality(show_resolved=True)
+        assert result["resolved"] == 1
+        assert result["unresolved"] == 1
+
+        # Default (show_resolved=False) should only return unresolved
+        result = await trove_quality()
+        assert len(result["errors"]) == 1
+        assert result["errors"][0]["path"] == "/nonexistent/test/corrupt.pdf"
