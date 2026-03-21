@@ -329,13 +329,11 @@ class TestStatusTools:
         assert result["by_type"]["permanent"] == 1
         assert len(result["errors"]) == 2
 
-        # Resolve one error and verify
         test_db.resolve_errors("/nonexistent/test/bad.pdf")
         result = await trove_quality(show_resolved=True)
         assert result["resolved"] == 1
         assert result["unresolved"] == 1
 
-        # Default (show_resolved=False) should only return unresolved
         result = await trove_quality()
         assert len(result["errors"]) == 1
         assert result["errors"][0]["path"] == "/nonexistent/test/corrupt.pdf"

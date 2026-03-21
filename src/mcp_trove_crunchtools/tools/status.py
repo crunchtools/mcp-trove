@@ -134,7 +134,6 @@ async def trove_quality(
     resolved_filter: bool | None = None if show_resolved else False
     errors = db.query_errors(resolved=resolved_filter, path=path, limit=limit)
 
-    # Compute aggregate counts across all errors (not just the page returned)
     all_errors = db.query_errors(resolved=None, path=path, limit=10_000)
     total = len(all_errors)
     resolved_count = sum(1 for e in all_errors if e["resolved"])
