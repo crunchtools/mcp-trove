@@ -154,6 +154,7 @@ def _store_one(extraction: dict[str, Any]) -> dict[str, str | int]:
 
     if not chunks:
         db.update_file(file_id, checksum, file_size, 0)
+        db.resolve_errors(path_str)
         return {"path": path_str, "status": "indexed", "chunk_count": 0}
 
     embeddings = embed_texts(chunks)
@@ -165,6 +166,7 @@ def _store_one(extraction: dict[str, Any]) -> dict[str, str | int]:
         db.insert_vector(chunk_id, embedding)
 
     db.update_file(file_id, checksum, file_size, len(chunks))
+    db.resolve_errors(path_str)
 
     return {"path": path_str, "status": "indexed", "chunk_count": len(chunks)}
 
@@ -228,6 +230,7 @@ def _partition_unchanged(
 async def _extract_and_store_batched(
     to_extract: list[tuple[Path, str, int, int | None]],
     results: list[dict[str, str | int]],
+    run_id: int | None = None,
 ) -> None:
     """Extract files in batches, storing each batch before starting the next.
 
@@ -267,13 +270,18 @@ async def _extract_and_store_batched(
         # Store this batch immediately, then free extraction data
         for idx, raw in enumerate(extractions):
             if isinstance(raw, BaseException):
+                err_path = str(chunk[idx][0])
+                err_msg = str(raw)
                 logger.warning(
                     "Failed to extract %s: %s", chunk[idx][0], raw,
                 )
+                db.insert_error(
+                    run_id, err_path, err_msg, db.classify_error(err_msg),
+                )
                 results.append({
-                    "path": str(chunk[idx][0]),
+                    "path": err_path,
                     "status": "error",
-                    "reason": str(raw),
+                    "reason": err_msg,
                     "chunk_count": 0,
                 })
                 continue
@@ -318,7 +326,7 @@ async def index_path_async(
         results, to_extract = _partition_unchanged(files, force)
 
         if to_extract:
-            await _extract_and_store_batched(to_extract, results)
+            await _extract_and_store_batched(to_extract, results, run_id)
 
         indexed = sum(1 for r in results if r["status"] == "indexed")
         skipped = sum(1 for r in results if r["status"] == "skipped")

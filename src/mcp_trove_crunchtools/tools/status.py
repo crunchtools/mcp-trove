@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from typing import Any
 
 from .. import database as db
@@ -122,3 +123,29 @@ async def trove_get_chunks(
         }
         for row in chunks
     ]
+
+
+async def trove_quality(
+    path: str | None = None,
+    show_resolved: bool = False,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Per-file error summary and details from indexing runs."""
+    resolved_filter: bool | None = None if show_resolved else False
+    errors = db.query_errors(resolved=resolved_filter, path=path, limit=limit)
+
+    # Compute aggregate counts across all errors (not just the page returned)
+    all_errors = db.query_errors(resolved=None, path=path, limit=10_000)
+    total = len(all_errors)
+    resolved_count = sum(1 for e in all_errors if e["resolved"])
+    unresolved_count = total - resolved_count
+
+    by_type: dict[str, int] = dict(Counter(e["error_type"] for e in all_errors))
+
+    return {
+        "total_errors": total,
+        "unresolved": unresolved_count,
+        "resolved": resolved_count,
+        "by_type": by_type,
+        "errors": errors,
+    }

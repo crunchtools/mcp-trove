@@ -71,6 +71,19 @@ CREATE TABLE IF NOT EXISTS index_runs (
     total_chunks INTEGER NOT NULL DEFAULT 0,
     error_message TEXT
 );
+
+CREATE TABLE IF NOT EXISTS index_errors (
+    id INTEGER PRIMARY KEY,
+    run_id INTEGER REFERENCES index_runs(id),
+    path TEXT NOT NULL,
+    error_message TEXT NOT NULL,
+    error_type TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    resolved_at TEXT,
+    resolved INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_errors_path ON index_errors(path);
+CREATE INDEX IF NOT EXISTS idx_errors_resolved ON index_errors(resolved);
 """
 
 VEC_TABLE_SQL = f"""
@@ -313,4 +326,83 @@ def log_run_error(run_id: int, error_message: str) -> None:
         "UPDATE index_runs SET finished_at = datetime('now'), status = 'failed', "
         "error_message = ? WHERE id = ?",
         (error_message, run_id),
+    )
+
+
+# --- Per-file error tracking ---
+
+_TRANSIENT_PATTERNS = (
+    "connection reset",
+    "dns",
+    "503",
+    "timeout",
+    "temporary failure",
+    "name resolution",
+    "broken pipe",
+    "connection refused",
+    "network unreachable",
+)
+
+
+def classify_error(error_message: str) -> str:
+    """Classify an error as 'transient' or 'permanent'."""
+    lower = error_message.lower()
+    for pattern in _TRANSIENT_PATTERNS:
+        if pattern in lower:
+            return "transient"
+    return "permanent"
+
+
+def insert_error(
+    run_id: int | None, path: str, error_message: str, error_type: str,
+) -> int:
+    """Record a per-file indexing failure."""
+    return execute(
+        "INSERT INTO index_errors (run_id, path, error_message, error_type) "
+        "VALUES (?, ?, ?, ?)",
+        (run_id, path, error_message, error_type),
+    )
+
+
+def resolve_errors(path: str) -> int:
+    """Mark all unresolved errors for a path as resolved.
+
+    Returns the number of rows updated.
+    """
+    db = get_db()
+    cursor = db.execute(
+        "UPDATE index_errors SET resolved = 1, resolved_at = datetime('now') "
+        "WHERE path = ? AND resolved = 0",
+        (path,),
+    )
+    db.commit()
+    return cursor.rowcount
+
+
+def query_errors(
+    *,
+    resolved: bool | None = False,
+    path: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """List per-file indexing errors with optional filters."""
+    clauses: list[str] = []
+    params: list[Any] = []
+
+    if resolved is not None:
+        clauses.append("resolved = ?")
+        params.append(1 if resolved else 0)
+    if path:
+        clauses.append("path LIKE ?")
+        params.append(path + "%")
+
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    params.append(limit)
+
+    return query(
+        f"SELECT id, run_id, path, error_message, error_type, "  # noqa: S608
+        f"created_at, resolved_at, resolved "
+        f"FROM index_errors {where} "
+        f"ORDER BY created_at DESC LIMIT ?",
+        tuple(params),
     )
