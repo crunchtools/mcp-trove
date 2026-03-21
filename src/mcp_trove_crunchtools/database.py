@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS files (
     checksum TEXT NOT NULL,
     file_type TEXT NOT NULL,
     file_size INTEGER NOT NULL,
+    mtime REAL,
     chunk_count INTEGER NOT NULL DEFAULT 0,
     indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -94,6 +95,14 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(
 """
 
 
+def _migrate_add_mtime(conn: sqlite3.Connection) -> None:
+    """Add mtime column to files table if it doesn't exist (migration)."""
+    cursor = conn.execute("PRAGMA table_info(files)")
+    columns = {row[1] for row in cursor.fetchall()}
+    if "mtime" not in columns:
+        conn.execute("ALTER TABLE files ADD COLUMN mtime REAL")
+
+
 def get_db(db_path: str | None = None) -> sqlite3.Connection:
     """Get or create the singleton database connection."""
     global _db
@@ -110,6 +119,7 @@ def get_db(db_path: str | None = None) -> sqlite3.Connection:
         _db.enable_load_extension(False)
         _db.executescript(SCHEMA)
         _db.execute(VEC_TABLE_SQL)
+        _migrate_add_mtime(_db)
         _db.commit()
     return _db
 
@@ -149,12 +159,13 @@ def insert_file(
     checksum: str,
     file_type: str,
     file_size: int,
+    mtime: float | None = None,
 ) -> int:
     """Insert a file record and return its ID."""
     return execute(
-        "INSERT INTO files (path, checksum, file_type, file_size) "
-        "VALUES (?, ?, ?, ?)",
-        (path, checksum, file_type, file_size),
+        "INSERT INTO files (path, checksum, file_type, file_size, mtime) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (path, checksum, file_type, file_size, mtime),
     )
 
 
@@ -163,12 +174,13 @@ def update_file(
     checksum: str,
     file_size: int,
     chunk_count: int,
+    mtime: float | None = None,
 ) -> None:
     """Update a file record after re-indexing."""
     execute(
         "UPDATE files SET checksum = ?, file_size = ?, chunk_count = ?, "
-        "indexed_at = datetime('now') WHERE id = ?",
-        (checksum, file_size, chunk_count, file_id),
+        "mtime = ?, indexed_at = datetime('now') WHERE id = ?",
+        (checksum, file_size, chunk_count, mtime, file_id),
     )
 
 

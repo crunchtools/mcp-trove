@@ -91,19 +91,45 @@ def scan_directory(
     return sorted(found)
 
 
-def _check_unchanged(path: Path) -> tuple[str, int, dict[str, Any] | None]:
-    """Check if a file needs re-extraction (main thread, DB-safe)."""
+def _check_unchanged(
+    path: Path,
+) -> tuple[str, int, float, dict[str, Any] | None]:
+    """Check if a file needs re-extraction (main thread, DB-safe).
+
+    Uses mtime+size as a fast pre-filter: if both match the DB record,
+    the file is assumed unchanged and the expensive SHA-256 is skipped.
+    Returns (checksum, file_size, mtime, existing_record).
+    """
     resolved = path.resolve()
-    checksum = compute_checksum(resolved)
-    file_size = resolved.stat().st_size
+    stat = resolved.stat()
+    file_size = stat.st_size
+    mtime = stat.st_mtime
+
     existing = db.query_one(
-        "SELECT id, checksum FROM files WHERE path = ?", (str(resolved),)
+        "SELECT id, checksum, file_size, mtime FROM files WHERE path = ?",
+        (str(resolved),),
     )
-    return checksum, file_size, existing
+
+    # Fast path: mtime+size match → skip checksum
+    if (
+        existing
+        and existing["mtime"] is not None
+        and existing["mtime"] == mtime
+        and existing["file_size"] == file_size
+    ):
+        return existing["checksum"], file_size, mtime, existing
+
+    # Slow path: compute checksum
+    checksum = compute_checksum(resolved)
+    return checksum, file_size, mtime, existing
 
 
 def _extract_one(
-    path: Path, checksum: str, file_size: int, existing_id: int | None
+    path: Path,
+    checksum: str,
+    file_size: int,
+    existing_id: int | None,
+    mtime: float = 0.0,
 ) -> dict[str, Any]:
     """Extract text from a single file (phase 1: IO + vision API).
 
@@ -121,6 +147,7 @@ def _extract_one(
         "file_type": file_type,
         "checksum": checksum,
         "file_size": file_size,
+        "mtime": mtime,
         "chunks": chunks,
         "existing_id": existing_id,
     }
@@ -144,16 +171,17 @@ def _store_one(extraction: dict[str, Any]) -> dict[str, str | int]:
     checksum = str(extraction["checksum"])
     file_type = str(extraction["file_type"])
     file_size = int(extraction["file_size"])
+    mtime = float(extraction.get("mtime") or 0.0)
     chunks: list[str] = extraction["chunks"]
     existing_id = extraction.get("existing_id")
 
     if existing_id is not None:
         db.delete_file_data(int(existing_id))
 
-    file_id = db.insert_file(path_str, checksum, file_type, file_size)
+    file_id = db.insert_file(path_str, checksum, file_type, file_size, mtime)
 
     if not chunks:
-        db.update_file(file_id, checksum, file_size, 0)
+        db.update_file(file_id, checksum, file_size, 0, mtime)
         db.resolve_errors(path_str)
         return {"path": path_str, "status": "indexed", "chunk_count": 0}
 
@@ -165,7 +193,7 @@ def _store_one(extraction: dict[str, Any]) -> dict[str, str | int]:
         chunk_id = db.insert_chunk(file_id, idx, chunk_content)
         db.insert_vector(chunk_id, embedding)
 
-    db.update_file(file_id, checksum, file_size, len(chunks))
+    db.update_file(file_id, checksum, file_size, len(chunks), mtime)
     db.resolve_errors(path_str)
 
     return {"path": path_str, "status": "indexed", "chunk_count": len(chunks)}
@@ -176,7 +204,7 @@ def index_file(path: Path, force: bool = False) -> dict[str, str | int]:
     resolved = path.resolve()
     run_id = db.start_run(str(resolved), 1)
     try:
-        checksum, file_size, existing = _check_unchanged(resolved)
+        checksum, file_size, mtime, existing = _check_unchanged(resolved)
 
         if existing and existing["checksum"] == checksum and not force:
             db.finish_run(
@@ -192,7 +220,9 @@ def index_file(path: Path, force: bool = False) -> dict[str, str | int]:
             }
         else:
             existing_id = existing["id"] if existing else None
-            extraction = _extract_one(resolved, checksum, file_size, existing_id)
+            extraction = _extract_one(
+                resolved, checksum, file_size, existing_id, mtime,
+            )
             file_status = _store_one(extraction)
             db.finish_run(
                 run_id,
@@ -208,12 +238,15 @@ def index_file(path: Path, force: bool = False) -> dict[str, str | int]:
 
 def _partition_unchanged(
     files: list[Path], force: bool,
-) -> tuple[list[dict[str, str | int]], list[tuple[Path, str, int, int | None]]]:
+) -> tuple[
+    list[dict[str, str | int]],
+    list[tuple[Path, str, int, int | None, float]],
+]:
     """Split files into skipped (unchanged) and needing extraction."""
     skipped: list[dict[str, str | int]] = []
-    to_extract: list[tuple[Path, str, int, int | None]] = []
+    to_extract: list[tuple[Path, str, int, int | None, float]] = []
     for fp in files:
-        checksum, file_size, existing = _check_unchanged(fp)
+        checksum, file_size, mtime, existing = _check_unchanged(fp)
         if existing and existing["checksum"] == checksum and not force:
             skipped.append({
                 "path": str(fp.resolve()),
@@ -223,12 +256,12 @@ def _partition_unchanged(
             })
         else:
             existing_id = existing["id"] if existing else None
-            to_extract.append((fp, checksum, file_size, existing_id))
+            to_extract.append((fp, checksum, file_size, existing_id, mtime))
     return skipped, to_extract
 
 
 async def _extract_and_store_batched(
-    to_extract: list[tuple[Path, str, int, int | None]],
+    to_extract: list[tuple[Path, str, int, int | None, float]],
     results: list[dict[str, str | int]],
     run_id: int | None = None,
 ) -> None:
@@ -243,11 +276,11 @@ async def _extract_and_store_batched(
     semaphore = asyncio.Semaphore(workers)
 
     async def extract_bounded(
-        file_path: Path, cs: str, fs: int, eid: int | None,
+        file_path: Path, cs: str, fs: int, eid: int | None, mt: float,
     ) -> dict[str, Any]:
         async with semaphore:
             return await asyncio.to_thread(
-                _extract_one, file_path, cs, fs, eid,
+                _extract_one, file_path, cs, fs, eid, mt,
             )
 
     logger.info(
@@ -261,8 +294,8 @@ async def _extract_and_store_batched(
         )
         extractions = await asyncio.gather(
             *(
-                extract_bounded(fp, cs, fs, eid)
-                for fp, cs, fs, eid in chunk
+                extract_bounded(fp, cs, fs, eid, mt)
+                for fp, cs, fs, eid, mt in chunk
             ),
             return_exceptions=True,
         )
