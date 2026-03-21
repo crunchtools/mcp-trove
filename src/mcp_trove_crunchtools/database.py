@@ -329,8 +329,6 @@ def log_run_error(run_id: int, error_message: str) -> None:
     )
 
 
-# --- Per-file error tracking ---
-
 _TRANSIENT_PATTERNS = (
     "connection reset",
     "dns",

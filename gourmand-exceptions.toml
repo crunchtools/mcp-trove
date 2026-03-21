@@ -122,3 +122,8 @@ justification = "_store_one is called from both index_file (sync) and index_path
 check = "verbose_comments"
 path = "src/mcp_trove_crunchtools/indexer.py"
 justification = "Phase comments (Phase 1b, Phase 2) document the concurrent pipeline stages for the async indexer."
+
+[[exceptions]]
+check = "lint_suppression"
+path = "src/mcp_trove_crunchtools/database.py"
+justification = "noqa: S608 on query_errors() f-string SQL — WHERE clause is built from hardcoded strings only, all user values are bound via params tuple."
