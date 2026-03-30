@@ -95,7 +95,7 @@ def _parse_paths(raw: str) -> list[str]:
     """Parse colon-separated directory paths."""
     if not raw.strip():
         return []
-    return [p.strip() for p in raw.split(":") if p.strip()]
+    return [p.strip() for p in raw.split(os.pathsep) if p.strip()]
 
 
 def _parse_exclude(raw: str) -> list[str]:
