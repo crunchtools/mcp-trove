@@ -51,3 +51,13 @@ def embed_query(text: str) -> list[float]:
     except Exception as exc:
         raise EmbeddingError(str(exc)) from exc
     return vec
+
+
+def get_vector_dims() -> int:
+    """Return the output dimension length of the current embedding model."""
+    model = get_model()
+    # Prefer the efficient `embedding_size` attribute if available.
+    if hasattr(model, "embedding_size") and isinstance(model.embedding_size, int):
+        return model.embedding_size
+    # Fallback to running a probe embedding.
+    return len(list(model.embed(["probe"]))[0])
