@@ -15,8 +15,6 @@ from .config import get_config
 
 _db: sqlite3.Connection | None = None
 
-VECTOR_DIMS = 384
-
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY,
@@ -87,12 +85,7 @@ CREATE INDEX IF NOT EXISTS idx_errors_path ON index_errors(path);
 CREATE INDEX IF NOT EXISTS idx_errors_resolved ON index_errors(resolved);
 """
 
-VEC_TABLE_SQL = f"""
-CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(
-    chunk_id INTEGER PRIMARY KEY,
-    embedding float[{VECTOR_DIMS}]
-);
-"""
+
 
 
 def _migrate_add_mtime(conn: sqlite3.Connection) -> None:
@@ -118,7 +111,18 @@ def get_db(db_path: str | None = None) -> sqlite3.Connection:
         sqlite_vec.load(_db)
         _db.enable_load_extension(False)
         _db.executescript(SCHEMA)
-        _db.execute(VEC_TABLE_SQL)
+
+        cursor = _db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_vec'")
+        if not cursor.fetchone():
+            from .embedder import get_vector_dims
+            dims = get_vector_dims()
+            _db.execute(f"""
+            CREATE VIRTUAL TABLE chunks_vec USING vec0(
+                chunk_id INTEGER PRIMARY KEY,
+                embedding float[{dims}]
+            );
+            """)
+
         _migrate_add_mtime(_db)
         _db.commit()
     return _db
