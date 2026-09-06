@@ -127,3 +127,13 @@ justification = "Phase comments (Phase 1b, Phase 2) document the concurrent pipe
 check = "lint_suppression"
 path = "src/mcp_trove_crunchtools/database.py"
 justification = "noqa: S608 on query_errors() f-string SQL — WHERE clause is built from hardcoded strings only, all user values are bound via params tuple."
+
+[[exceptions]]
+check = "copy_paste_detection"
+path = "src/mcp_trove_crunchtools/database.py"
+justification = "query, query_one and execute share a two-line connection-and-cursor setup and then diverge: all rows, first row or None, and lastrowid after commit. Three distinct operations, not duplicated logic."
+
+[[exceptions]]
+check = "copy_paste_detection"
+path = "src/mcp_trove_crunchtools/indexer.py"
+justification = "_extract_one and remove_path share the resolve-path-then-update-the-index shape. One adds a document, the other deletes it; the shared part is the index bookkeeping either way."
