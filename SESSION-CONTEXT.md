@@ -44,7 +44,7 @@ Built and deployed `backup_HomeDirectories` module in PersonalBackups.sh:
 
 4. **Deploy** — `/deploy-mcp-server` to breetai/lotor
 
-5. **Fleet watchdog** — add to fleet-watchdog.py, Zabbix items/triggers
+5. **Fleet watchdog** — add to fleet-watchdog.py, Nagios check + service definition
 
 6. **MCP Registry** — publish to registry.modelcontextprotocol.io
 
