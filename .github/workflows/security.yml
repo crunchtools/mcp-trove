@@ -18,7 +18,7 @@ jobs:
     name: Dependency CVE Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
@@ -60,7 +60,7 @@ jobs:
     name: Container Security Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build container image
         run: docker build -f Containerfile -t mcp-trove:scan .
       - name: Run Trivy vulnerability scanner
@@ -80,7 +80,7 @@ jobs:
     name: CodeQL Analysis
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
