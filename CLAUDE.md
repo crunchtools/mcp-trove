@@ -20,7 +20,7 @@ uv run mcp-trove-crunchtools
 - `TROVE_CHUNK_SIZE` — Characters per text chunk (default: 1000)
 - `TROVE_CHUNK_OVERLAP` — Overlap between chunks (default: 200)
 
-## Tools (8)
+## Tools (10)
 
 ### Search (2)
 - trove_search_tool, trove_similar_tool
@@ -28,8 +28,10 @@ uv run mcp-trove-crunchtools
 ### Index Management (3)
 - trove_index_tool, trove_reindex_tool, trove_remove_tool
 
-### Status (3)
-- trove_status_tool, trove_list_tool, trove_get_chunks_tool
+### Status (5)
+- trove_status_tool, trove_list_tool, trove_get_chunks_tool, trove_log_tool, trove_quality_tool
+
+Update the tool listing above when adding/removing a tool. No gate reads prose, so a stale count survives a fully green pipeline.
 
 ## Development
 

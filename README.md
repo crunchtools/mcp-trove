@@ -37,7 +37,7 @@ podman run -v trove-data:/data -v ~/Documents:/docs:ro quay.io/crunchtools/mcp-t
 claude mcp add mcp-trove-crunchtools -- uvx mcp-trove-crunchtools
 ```
 
-## Tools (8)
+## Tools (10)
 
 ### Search (2)
 
@@ -54,13 +54,15 @@ claude mcp add mcp-trove-crunchtools -- uvx mcp-trove-crunchtools
 | `trove_reindex` | Force re-index ignoring checksums. If no path given, reindexes everything. |
 | `trove_remove` | Remove a file or directory from the index. |
 
-### Status (3)
+### Status (5)
 
 | Tool | Description |
 |------|-------------|
 | `trove_status` | Index statistics: total files, chunks, disk usage, model info. |
 | `trove_list` | List indexed files with metadata (size, type, chunk count). |
 | `trove_get_chunks` | Show the text chunks for a specific indexed file. |
+| `trove_log` | Activity log of indexing runs: start/finish times, file counts, errors. Persisted in SQLite, survives container crashes. |
+| `trove_quality` | Per-file error tracking from indexing runs: which files failed, why, and whether a later index resolved it. |
 
 ## Environment Variables
 
