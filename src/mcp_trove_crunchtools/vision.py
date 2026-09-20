@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
+import os
+import urllib.request
 from typing import TYPE_CHECKING, Any, Protocol
 
 from .config import get_config
@@ -57,8 +60,6 @@ class GeminiBackend:
             raise ExtractionError(
                 "GeminiBackend", "google-genai not installed (pip install google-genai)"
             ) from exc
-
-        import os
 
         api_key = os.environ.get("GEMINI_API_KEY", "")
         if not api_key:
@@ -120,8 +121,6 @@ class OpenAIBackend:
                 "OpenAIBackend", "openai not installed (pip install openai)"
             ) from exc
 
-        import os
-
         api_key = os.environ.get("OPENAI_API_KEY", "")
         if not api_key:
             raise ExtractionError("OpenAIBackend", "OPENAI_API_KEY not set")
@@ -170,9 +169,6 @@ class OllamaBackend:
     def caption(self, path: Path, file_type: str) -> str:
         if file_type == "video":
             raise ExtractionError(str(path), "Ollama vision does not support video files")
-
-        import json
-        import urllib.request
 
         b64 = base64.b64encode(path.read_bytes()).decode("ascii")
         payload = json.dumps({

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import argparse
-import sys
+import asyncio
+from pathlib import Path
 
 __version__ = "0.5.1"
 
@@ -59,9 +60,6 @@ def main() -> None:
 
 def _run_index() -> None:
     """Index configured directories (CLI mode for systemd timer)."""
-    import asyncio
-    from pathlib import Path
-
     from .config import get_config
     from .database import get_db
     from .tools.index import trove_index
@@ -71,7 +69,7 @@ def _run_index() -> None:
 
     if not config.index_paths:
         print("No TROVE_PATHS configured. Nothing to index.")
-        sys.exit(0)
+        return
 
     for dir_path in config.index_paths:
         target = Path(dir_path)
@@ -83,5 +81,3 @@ def _run_index() -> None:
         skipped = result.get("files_skipped", 0)
         chunks = result.get("total_chunks", 0)
         print(f"{dir_path}: {indexed} indexed, {skipped} skipped, {chunks} chunks")
-
-    sys.exit(0)

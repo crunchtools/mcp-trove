@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import json
+import logging
+import sqlite3
+import struct
 from typing import Any
+
+from pydantic import ValidationError
 
 from .. import database as db
 from ..embedder import embed_query
-from ..errors import FileNotIndexedError
+from ..errors import FileNotIndexedError, InvalidInputError
+from ..models import SearchParams, SimilarParams
+
+logger = logging.getLogger(__name__)
 
 
 async def trove_search(
@@ -20,12 +28,24 @@ async def trove_search(
     Combines vector similarity and keyword matching, deduplicates,
     and returns ranked results with file paths and context.
     """
+    try:
+        params = SearchParams(query=query, path=path, limit=limit)
+    except ValidationError as exc:
+        raise InvalidInputError(str(exc)) from exc
+    query, path, limit = params.query, params.path, params.limit
+
     query_embedding = embed_query(query)
     vec_results = db.search_vectors(query_embedding, limit, path_filter=path)
 
     try:
         fts_results = db.search_fts(query, limit)
-    except Exception:
+    except sqlite3.OperationalError as exc:
+        # FTS5 MATCH syntax is strict about quotes/operators/punctuation, and raw
+        # user queries commonly contain characters that trip it (e.g. "don't",
+        # "c++"). Vector results still cover the query, so fall back to those
+        # alone rather than failing the whole search -- but log it, since a
+        # corrupt FTS5 index would raise the same error and should be visible.
+        logger.warning("FTS5 query failed, falling back to vector-only results: %s", exc)
         fts_results = []
 
     seen_chunk_ids: set[int] = set()
@@ -74,6 +94,12 @@ async def trove_similar(
 
     Uses the average embedding of all chunks in the file as the query vector.
     """
+    try:
+        params = SimilarParams(file_path=file_path, limit=limit)
+    except ValidationError as exc:
+        raise InvalidInputError(str(exc)) from exc
+    file_path, limit = params.file_path, params.limit
+
     existing = db.query_one(
         "SELECT id FROM files WHERE path = ?", (file_path,)
     )
@@ -85,8 +111,6 @@ async def trove_similar(
 
     if not chunk_vecs:
         return []
-
-    import struct
 
     all_embeddings: list[list[float]] = []
     for row in chunk_vecs:

@@ -6,9 +6,16 @@ import json
 from collections import Counter
 from typing import Any
 
+from pydantic import ValidationError
+
 from .. import database as db
 from ..config import get_config
-from ..errors import FileNotIndexedError
+from ..errors import FileNotIndexedError, InvalidInputError
+from ..models import GetChunksParams, ListParams
+
+# Effectively "all" errors for the total/resolved/unresolved counts below --
+# a practical upper bound on a per-file error log, not a paginated result.
+_QUALITY_SUMMARY_SCAN_LIMIT = 10_000
 
 
 async def trove_status() -> dict[str, Any]:
@@ -57,6 +64,12 @@ async def trove_list(
     offset: int = 0,
 ) -> list[dict[str, Any]]:
     """List indexed files with metadata."""
+    try:
+        params = ListParams(path=path, limit=limit, offset=offset)
+    except ValidationError as exc:
+        raise InvalidInputError(str(exc)) from exc
+    path, limit, offset = params.path, params.limit, params.offset
+
     if path:
         files = db.query(
             "SELECT id, path, file_type, file_size, chunk_count, indexed_at "
@@ -101,6 +114,12 @@ async def trove_get_chunks(
     limit: int = 50,
 ) -> list[dict[str, Any]]:
     """Show the text chunks for a specific indexed file."""
+    try:
+        params = GetChunksParams(file_path=file_path, limit=limit)
+    except ValidationError as exc:
+        raise InvalidInputError(str(exc)) from exc
+    file_path, limit = params.file_path, params.limit
+
     existing = db.query_one(
         "SELECT id FROM files WHERE path = ?", (file_path,)
     )
@@ -134,7 +153,7 @@ async def trove_quality(
     resolved_filter: bool | None = None if show_resolved else False
     errors = db.query_errors(resolved=resolved_filter, path=path, limit=limit)
 
-    all_errors = db.query_errors(resolved=None, path=path, limit=10_000)
+    all_errors = db.query_errors(resolved=None, path=path, limit=_QUALITY_SUMMARY_SCAN_LIMIT)
     total = len(all_errors)
     resolved_count = sum(1 for e in all_errors if e["resolved"])
     unresolved_count = total - resolved_count

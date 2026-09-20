@@ -434,7 +434,7 @@ def query_errors(
     params.append(limit)
 
     return query(
-        f"SELECT id, run_id, path, error_message, error_type, "  # noqa: S608
+        f"SELECT id, run_id, path, error_message, error_type, "
         f"created_at, resolved_at, resolved "
         f"FROM index_errors {where} "
         f"ORDER BY created_at DESC LIMIT ?",

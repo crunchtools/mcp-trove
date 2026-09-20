@@ -5,9 +5,12 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-import pytest
-
-from mcp_trove_crunchtools.indexer import chunk_text, compute_checksum, scan_directory
+from mcp_trove_crunchtools.indexer import (
+    MAX_FILE_SIZE,
+    chunk_text,
+    compute_checksum,
+    scan_directory,
+)
 
 
 class TestChecksum:
@@ -102,9 +105,22 @@ class TestScanDirectory:
             assert len(files) == 1
             assert files[0].name == "visible.txt"
 
-    @pytest.mark.skipif(True, reason="Would need a 50MB+ file")
     def test_scan_skips_large_files(self) -> None:
-        pass
+        with tempfile.TemporaryDirectory() as tmpdir:
+            small = Path(tmpdir) / "small.txt"
+            small.write_text("content")
+
+            # A sparse file reports st_size over MAX_FILE_SIZE without
+            # actually writing that many bytes to disk, so this stays fast
+            # and reliable in CI instead of needing a real 50MB+ file.
+            oversized = Path(tmpdir) / "oversized.txt"
+            with oversized.open("wb") as f:
+                f.seek(MAX_FILE_SIZE + 1)
+                f.write(b"\0")
+            assert oversized.stat().st_size > MAX_FILE_SIZE
+
+            files = scan_directory(Path(tmpdir))
+            assert files == [small]
 
     def test_scan_recursive(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
