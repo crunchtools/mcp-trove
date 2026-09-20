@@ -40,3 +40,10 @@ class UnsupportedFileTypeError(TroveError):
 
     def __init__(self, path: str, suffix: str) -> None:
         super().__init__(f"Unsupported file type '{suffix}' for: {path}")
+
+
+class InvalidInputError(TroveError):
+    """Raised when tool input fails Pydantic validation (length limits, unknown fields, etc.)."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"Invalid input: {reason}")

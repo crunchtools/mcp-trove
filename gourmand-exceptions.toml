@@ -1,139 +1,101 @@
-[[exceptions]]
-check = "summary_litter"
-path = "CLAUDE.md"
-justification = "Claude Code project instructions for AI assistant orientation"
-
-[[exceptions]]
-check = "primitive_obsession"
-path = "src/mcp_trove_crunchtools/database.py"
-justification = "SQLite schema constants and vector dimensions are standard well-known values"
 
 [[exceptions]]
 check = "primitive_obsession"
 path = "src/mcp_trove_crunchtools/__init__.py"
 justification = "Port 8020 is the assigned HTTP port for this MCP server"
-
-[[exceptions]]
-check = "primitive_obsession"
-path = "src/mcp_trove_crunchtools/config.py"
-justification = "Default chunk size (1000) and overlap (200) are standard text chunking values"
-
-[[exceptions]]
-check = "primitive_obsession"
-path = "src/mcp_trove_crunchtools/indexer.py"
-justification = "File size limits and hash buffer sizes are standard well-known constants"
-
-[[exceptions]]
-check = "lint_suppression"
-path = "src/mcp_trove_crunchtools/config.py"
-justification = "SecretStr TYPE_CHECKING import required by MCP Server constitution profile"
-
-[[exceptions]]
-check = "single_use_helpers"
-path = "src/mcp_trove_crunchtools/extractor.py"
-justification = "Dispatcher pattern: extract_text() dispatches to _extract_pdf, _extract_docx, _extract_image, _extract_video, _extract_text_file by file type. Each handles a distinct format with different library imports. Inlining would create a 200+ line function mixing pymupdf4llm, python-docx, PIL, and vision imports."
-
-[[exceptions]]
-check = "single_use_helpers"
-path = "src/mcp_trove_crunchtools/config.py"
-justification = "Config parsing helpers _parse_paths and _parse_exclude separate parsing logic from __init__; _default_vision_model maps backend names to model defaults."
-
-[[exceptions]]
-check = "single_use_helpers"
-path = "tests/conftest.py"
-justification = "Test fixture helper _mock_embedding generates deterministic vectors used by _mock_embed_texts; test boundary code."
+classification = "by_design"
 
 [[exceptions]]
 check = "lint_suppression"
 path = "src/mcp_trove_crunchtools/extractor.py"
 justification = "PIL EXIF returns untyped IFD values; type: ignore on cast_dms is required to convert object to tuple for float extraction."
+classification = "by_design"
 
 [[exceptions]]
 check = "lint_suppression"
 path = "tests/test_validation.py"
 justification = "type: ignore[call-arg] used to deliberately test that extra fields are rejected by pydantic models."
+classification = "by_design"
 
 [[exceptions]]
 check = "primitive_obsession"
 path = "src/mcp_trove_crunchtools/extractor.py"
 justification = "EXIF tag IDs (36867, 271, 272, 256, 257, 0x8825) are standardized TIFF/EXIF constants defined by the EXIF specification."
+classification = "by_design"
 
 [[exceptions]]
 check = "primitive_obsession"
 path = "src/mcp_trove_crunchtools/vision.py"
 justification = "HTTP timeout (120s) for Ollama local API and max_tokens (300) for OpenAI are standard API call parameters."
-
-[[exceptions]]
-check = "test_skip_evasion"
-path = "tests/test_indexer.py"
-justification = "test_scan_skips_large_files is skipped on CI because creating a 100MB temp file is slow and unreliable in constrained environments."
-
-[[exceptions]]
-check = "redundant_error_handling"
-path = "src/mcp_trove_crunchtools/extractor.py"
-justification = "ExtractionError wrapping in _extract_pdf and _extract_docx converts library-specific exceptions (pymupdf, docx) into the unified TroveError hierarchy for consistent error handling upstream."
-
-[[exceptions]]
-check = "verbose_comments"
-path = "src/mcp_trove_crunchtools/extractor.py"
-justification = "Docstrings on public functions (extract_text, detect_file_type, is_supported) are required for MCP tool discoverability."
-
-[[exceptions]]
-check = "verbose_comments"
-path = "src/mcp_trove_crunchtools/server.py"
-justification = "Section separator comments (Search Tools, Index Management, Status Tools) provide navigation in a 150-line tool registration file."
-
-[[exceptions]]
-check = "verbose_comments"
-path = "src/mcp_trove_crunchtools/vision.py"
-justification = "Docstring on get_backend() describes the singleton behavior and None return semantics."
-
-[[exceptions]]
-check = "verbose_comments"
-path = "tests/test_indexer.py"
-justification = "Test docstrings describe test intent for non-obvious assertions."
-
-[[exceptions]]
-check = "verbose_comments"
-path = "tests/test_vision.py"
-justification = "Test docstrings describe test intent for non-obvious assertions."
-
-[[exceptions]]
-check = "generic_names"
-path = "src/mcp_trove_crunchtools/__init__.py"
-justification = "Variable 'result' holds argparse.parse_args() return — standard argparse idiom."
+classification = "by_design"
 
 [[exceptions]]
 check = "primitive_obsession"
 path = "tests/conftest.py"
 justification = "10000 modulo seed for deterministic mock embeddings — test fixture constant."
+classification = "by_design"
 
 [[exceptions]]
 check = "summary_litter"
 path = "SESSION-CONTEXT.md"
 justification = "Claude Code session context file, not committed to repository."
+classification = "by_design"
 
 [[exceptions]]
 check = "single_use_helpers"
 path = "src/mcp_trove_crunchtools/indexer.py"
 justification = "_store_one is called from both index_file (sync) and index_path_async (concurrent loop). _partition_unchanged separates DB-safe checksum checks from thread-unsafe extraction for the async pipeline."
+classification = "by_design"
 
 [[exceptions]]
 check = "verbose_comments"
 path = "src/mcp_trove_crunchtools/indexer.py"
 justification = "Phase comments (Phase 1b, Phase 2) document the concurrent pipeline stages for the async indexer."
-
-[[exceptions]]
-check = "lint_suppression"
-path = "src/mcp_trove_crunchtools/database.py"
-justification = "noqa: S608 on query_errors() f-string SQL — WHERE clause is built from hardcoded strings only, all user values are bound via params tuple."
+classification = "by_design"
 
 [[exceptions]]
 check = "copy_paste_detection"
 path = "src/mcp_trove_crunchtools/database.py"
 justification = "query, query_one and execute share a two-line connection-and-cursor setup and then diverge: all rows, first row or None, and lastrowid after commit. Three distinct operations, not duplicated logic."
+classification = "by_design"
 
 [[exceptions]]
 check = "copy_paste_detection"
 path = "src/mcp_trove_crunchtools/indexer.py"
 justification = "_extract_one and remove_path share the resolve-path-then-update-the-index shape. One adds a document, the other deletes it; the shared part is the index bookkeeping either way."
+classification = "by_design"
+[[exceptions]]
+check = "manifest_lint_suppression"
+path = "pyproject.toml"
+justification = "Reviewed each global ignore by removing it and running ruff (not by trusting comments). TRY003, PLR0913, PLR2004, PIE790, PLC0415, S105, RUF022 all had zero remaining hits and were deleted outright -- dead config. S101, PLW0603, and the rest were verified to fire only in specific files/dirs and rescoped to per-file-ignores accordingly (see the per-entry comments in the per-file-ignores table for each rule's specific justification: config.py/database.py/embedder.py/vision.py for PLW0603 lazy singletons, embedder.py/__init__.py/extractor.py/vision.py for PLC0415 optional-dependency and CLI-lazy imports, tools/* for TID252's parent-package imports, database.py for the S608 query that was previously an inline noqa (moved here because gourmand's own EV001-lint_suppression flags inline noqa)). S310 is the only global ignore, verified to cover exactly the one hardcoded localhost:11434 Ollama call, never derived from external input."
+classification = "by_design"
+
+[[exceptions]]
+check = "hidden_env_config"
+path = "src/mcp_trove_crunchtools/config.py"
+justification = "All 12 vars (TROVE_DB, TROVE_PATHS, TROVE_INDEX_WORKERS, TROVE_INDEX_BATCH, TROVE_EMBEDDING_MODEL, TROVE_EXCLUDE_PATTERNS, TROVE_CHUNK_SIZE, TROVE_CHUNK_OVERLAP, TROVE_VISION_BACKEND, TROVE_VISION_MODEL, TROVE_VISION_PROMPT, TROVE_VISION_TIMEOUT) are documented in README.md's Environment Variables table with defaults verified line-by-line against this file's actual DEFAULT_* constants and os.environ.get() fallbacks -- including TROVE_INDEX_WORKERS, confirmed to read 20 here and 20 in the README (an earlier documentation pass had this wrong as 2 before gourmand 0.1.0 predated this check)."
+classification = "by_design"
+
+[[exceptions]]
+check = "dead_structs"
+path = "src/mcp_trove_crunchtools/vision.py"
+justification = "GeminiBackend, OpenAIBackend and OllamaBackend are constructed dynamically in get_backend() via a name-to-class dict (backends[cfg.vision_backend](cfg.vision_model, cfg.vision_prompt)) rather than a literal ClassName(...) call the check's static analysis can match. The construction site is real; this is dynamic dispatch, not dead code."
+classification = "gourmand_bug"
+
+[[exceptions]]
+check = "copy_paste_detection"
+path = "src/mcp_trove_crunchtools/extractor.py"
+justification = "_get_supported_extensions (build a set of file extensions) and _extract_video (caption a video via the vision backend) are semantically unrelated; the 99%-similar match is a coincidental structural collision -- both happen to call get_backend() and check `is None` in a short function body, not real copy-paste."
+classification = "gourmand_bug"
+
+[[exceptions]]
+check = "copy_paste_detection"
+path = "src/mcp_trove_crunchtools/vision.py"
+justification = "OpenAIBackend.caption and OllamaBackend.caption both implement the same caption(path, file_type) interface for a different vision provider (OpenAI's SDK vs. a raw HTTP call to local Ollama); the video-not-supported guard clause and overall shape are the interface, which is the point of having multiple backends."
+classification = "by_design"
+
+[[exceptions]]
+check = "unsafe_sql_construction"
+path = "src/mcp_trove_crunchtools/database.py"
+justification = "query_errors()'s WHERE clause is built from hardcoded strings only ('resolved = ?', 'path LIKE ?') -- every user-controlled value (resolved, path) is bound via the params tuple through ? placeholders, never interpolated into the SQL text itself. Same verified pattern as the S608 ruff ignore scoped to this file."
+classification = "by_design"
