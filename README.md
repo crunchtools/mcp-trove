@@ -68,12 +68,23 @@ claude mcp add mcp-trove-crunchtools -- uvx mcp-trove-crunchtools
 |----------|---------|-------------|
 | `TROVE_DB` | `~/.local/share/mcp-trove/trove.db` | SQLite database path |
 | `TROVE_PATHS` | (none) | Colon-separated directories to index in background mode |
-| `TROVE_INDEX_WORKERS` | `2` | Concurrent embedding workers |
+| `TROVE_INDEX_WORKERS` | `20` | Concurrent embedding workers |
 | `TROVE_INDEX_BATCH` | `50` | Files per indexing batch |
 | `TROVE_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | fastembed model name |
 | `TROVE_EXCLUDE_PATTERNS` | `*.iso,*.zip,...` | Glob patterns to skip |
 | `TROVE_CHUNK_SIZE` | `1000` | Characters per text chunk |
 | `TROVE_CHUNK_OVERLAP` | `200` | Overlap between chunks |
+| `TROVE_VISION_BACKEND` | `none` | Vision captioning backend: `gemini`, `openai`, `ollama`, or `none` to disable |
+| `TROVE_VISION_MODEL` | per backend | Vision model. Defaults to `gemini-2.5-flash`, `gpt-4o-mini` or `llava` depending on the backend; empty when disabled |
+| `TROVE_VISION_PROMPT` | (see below) | Caption prompt sent with each image |
+| `TROVE_VISION_TIMEOUT` | `120` | Seconds allowed per vision API call |
+
+Image and video captioning is off until `TROVE_VISION_BACKEND` is set. The
+default caption prompt is:
+
+> Generate a concise caption for this image suitable for search indexing.
+> Include: what you see, location if identifiable, time of day, any readable
+> text or signs.
 
 ## Background Indexing
 

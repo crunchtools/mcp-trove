@@ -13,7 +13,7 @@ uv run mcp-trove-crunchtools
 
 - `TROVE_DB` — SQLite database path (default: ~/.local/share/mcp-trove/trove.db)
 - `TROVE_PATHS` — Colon-separated directories to index in background mode
-- `TROVE_INDEX_WORKERS` — Concurrent embedding workers (default: 2)
+- `TROVE_INDEX_WORKERS` — Concurrent embedding workers (default: 20)
 - `TROVE_INDEX_BATCH` — Files per indexing batch (default: 50)
 - `TROVE_EMBEDDING_MODEL` — fastembed model name (default: BAAI/bge-small-en-v1.5)
 - `TROVE_EXCLUDE_PATTERNS` — Comma-separated glob patterns to skip
