@@ -13,14 +13,46 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 TEXT_EXTENSIONS = {
-    ".txt", ".md", ".markdown", ".rst", ".csv", ".tsv",
-    ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg",
-    ".py", ".js", ".ts", ".go", ".rs", ".java", ".c", ".cpp", ".h",
-    ".sh", ".bash", ".zsh", ".fish",
-    ".html", ".htm", ".xml", ".svg",
-    ".sql", ".r", ".rb", ".pl", ".lua",
-    ".tex", ".bib", ".org",
-    ".log", ".conf", ".env",
+    ".txt",
+    ".md",
+    ".markdown",
+    ".rst",
+    ".csv",
+    ".tsv",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".py",
+    ".js",
+    ".ts",
+    ".go",
+    ".rs",
+    ".java",
+    ".c",
+    ".cpp",
+    ".h",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".fish",
+    ".html",
+    ".htm",
+    ".xml",
+    ".svg",
+    ".sql",
+    ".r",
+    ".rb",
+    ".pl",
+    ".lua",
+    ".tex",
+    ".bib",
+    ".org",
+    ".log",
+    ".conf",
+    ".env",
 }
 
 PDF_EXTENSIONS = {".pdf"}
@@ -28,8 +60,16 @@ DOCX_EXTENSIONS = {".docx"}
 MARKDOWN_EXTENSIONS = {".md", ".markdown"}
 
 IMAGE_EXTENSIONS = {
-    ".jpg", ".jpeg", ".png", ".gif", ".heic", ".heif",
-    ".webp", ".bmp", ".tiff", ".tif",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".heic",
+    ".heif",
+    ".webp",
+    ".bmp",
+    ".tiff",
+    ".tif",
 }
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".webm", ".mkv"}
 

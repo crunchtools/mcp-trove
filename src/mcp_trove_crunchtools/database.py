@@ -163,8 +163,7 @@ def insert_file(
 ) -> int:
     """Insert a file record and return its ID."""
     return execute(
-        "INSERT INTO files (path, checksum, file_type, file_size, mtime) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO files (path, checksum, file_type, file_size, mtime) VALUES (?, ?, ?, ?, ?)",
         (path, checksum, file_type, file_size, mtime),
     )
 
@@ -195,11 +194,7 @@ def update_file_mtime(file_id: int, mtime: float) -> None:
 def delete_file_data(file_id: int) -> None:
     """Delete all chunks and vectors for a file, then the file record."""
     db = get_db()
-    chunk_ids = [
-        row["id"] for row in query(
-            "SELECT id FROM chunks WHERE file_id = ?", (file_id,)
-        )
-    ]
+    chunk_ids = [row["id"] for row in query("SELECT id FROM chunks WHERE file_id = ?", (file_id,))]
     for chunk_id in chunk_ids:
         db.execute("DELETE FROM chunks_vec WHERE chunk_id = ?", (chunk_id,))
     db.execute("DELETE FROM chunks WHERE file_id = ?", (file_id,))
@@ -216,8 +211,7 @@ def insert_chunk(
     """Insert a text chunk and return its ID."""
     meta_json = json.dumps(metadata) if metadata else None
     return execute(
-        "INSERT INTO chunks (file_id, chunk_index, content, metadata) "
-        "VALUES (?, ?, ?, ?)",
+        "INSERT INTO chunks (file_id, chunk_index, content, metadata) VALUES (?, ?, ?, ?)",
         (file_id, chunk_index, content, meta_json),
     )
 
@@ -388,12 +382,14 @@ def classify_error(error_message: str) -> str:
 
 
 def insert_error(
-    run_id: int | None, path: str, error_message: str, error_type: str,
+    run_id: int | None,
+    path: str,
+    error_message: str,
+    error_type: str,
 ) -> int:
     """Record a per-file indexing failure."""
     return execute(
-        "INSERT INTO index_errors (run_id, path, error_message, error_type) "
-        "VALUES (?, ?, ?, ?)",
+        "INSERT INTO index_errors (run_id, path, error_message, error_type) VALUES (?, ?, ?, ?)",
         (run_id, path, error_message, error_type),
     )
 

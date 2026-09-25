@@ -76,12 +76,14 @@ claude mcp add mcp-trove-crunchtools -- uvx mcp-trove-crunchtools
 | `TROVE_EXCLUDE_PATTERNS` | `*.iso,*.zip,...` | Glob patterns to skip |
 | `TROVE_CHUNK_SIZE` | `1000` | Characters per text chunk |
 | `TROVE_CHUNK_OVERLAP` | `200` | Overlap between chunks |
-| `TROVE_VISION_BACKEND` | `none` | Vision captioning backend: `gemini`, `openai`, `ollama`, or `none` to disable |
-| `TROVE_VISION_MODEL` | per backend | Vision model. Defaults to `gemini-2.5-flash`, `gpt-4o-mini` or `llava` depending on the backend; empty when disabled |
+| `TROVE_VISION_BACKEND` | `none` | Vision captioning backend: `gemini`, `openai`, `openrouter`, `ollama`, or `none` to disable |
+| `TROVE_VISION_MODEL` | per backend | Vision model. Defaults to `gemini-2.5-flash`, `gpt-4o-mini`, `google/gemini-3.1-flash-lite` (openrouter) or `llava` depending on the backend; empty when disabled |
 | `TROVE_VISION_PROMPT` | (see below) | Caption prompt sent with each image |
 | `TROVE_VISION_TIMEOUT` | `120` | Seconds allowed per vision API call |
 
 Image and video captioning is off until `TROVE_VISION_BACKEND` is set. The
+`openrouter` backend reads `OPENROUTER_API_KEY_FILE` or `OPENROUTER_API_KEY`,
+handles video as well as images, and only routes to zero-retention providers. The
 default caption prompt is:
 
 > Generate a concise caption for this image suitable for search indexing.

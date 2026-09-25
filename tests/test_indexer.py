@@ -15,9 +15,7 @@ from mcp_trove_crunchtools.indexer import (
 
 class TestChecksum:
     def test_consistent_checksum(self) -> None:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("Checksum test content")
             path = f.name
 
@@ -29,14 +27,10 @@ class TestChecksum:
         Path(path).unlink()
 
     def test_different_content_different_checksum(self) -> None:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("Content A")
             path_a = f.name
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("Content B")
             path_b = f.name
 

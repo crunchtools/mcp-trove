@@ -35,8 +35,8 @@ This document describes the security architecture of mcp-trove-crunchtools.
 ```
 +---------------------------------------------------------+
 | Layer 1: Credential Protection                           |
-| - N/A — local files only, no external API credentials   |
-| - SecretStr pattern available if credentials added later |
+| - Indexing/search: local only, no credentials           |
+| - Optional vision backends: API key as SecretStr        |
 +---------------------------------------------------------+
 | Layer 2: Input Validation                                |
 | - Pydantic models for all tool inputs                   |
@@ -62,9 +62,9 @@ This document describes the security architecture of mcp-trove-crunchtools.
 +---------------------------------------------------------+
 ```
 
-### 2.2 No Credentials
+### 2.2 Credentials
 
-This server has no API tokens or credentials. It reads local files and stores embeddings in a local SQLite database. The primary security concerns are input validation and file access control.
+Indexing and search need no credentials: the server reads local files and stores embeddings in a local SQLite database. Vision captioning is opt-in (`TROVE_VISION_BACKEND`), and each remote backend needs one API key (`GEMINI_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY` / `OPENROUTER_API_KEY_FILE`). Keys are never logged. The openrouter backend only routes to zero-data-retention providers. The primary security concerns remain input validation and file access control.
 
 ### 2.3 Input Validation Rules
 

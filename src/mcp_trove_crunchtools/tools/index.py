@@ -82,17 +82,17 @@ async def trove_reindex(path: str | None = None) -> dict[str, Any]:
             if file_path.exists():
                 results.extend(await index_path_async(file_path, force=True))
             else:
-                existing = db.query_one(
-                    "SELECT id FROM files WHERE path = ?", (row["path"],)
-                )
+                existing = db.query_one("SELECT id FROM files WHERE path = ?", (row["path"],))
                 if existing:
                     db.delete_file_data(existing["id"])
-                    results.append({
-                        "path": row["path"],
-                        "status": "removed",
-                        "reason": "file_missing",
-                        "chunk_count": 0,
-                    })
+                    results.append(
+                        {
+                            "path": row["path"],
+                            "status": "removed",
+                            "reason": "file_missing",
+                            "chunk_count": 0,
+                        }
+                    )
 
     indexed = sum(1 for r in results if r["status"] == "indexed")
     removed = sum(1 for r in results if r.get("status") == "removed")
