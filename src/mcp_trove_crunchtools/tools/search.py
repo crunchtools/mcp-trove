@@ -56,32 +56,36 @@ async def trove_search(
         if chunk_id in seen_chunk_ids:
             continue
         seen_chunk_ids.add(chunk_id)
-        merged.append({
-            "chunk_id": chunk_id,
-            "path": row["path"],
-            "file_type": row["file_type"],
-            "chunk_index": row["chunk_index"],
-            "content": row["content"],
-            "metadata": json.loads(row["metadata"]) if row["metadata"] else None,
-            "vector_distance": row["distance"],
-            "source": "vector",
-        })
+        merged.append(
+            {
+                "chunk_id": chunk_id,
+                "path": row["path"],
+                "file_type": row["file_type"],
+                "chunk_index": row["chunk_index"],
+                "content": row["content"],
+                "metadata": json.loads(row["metadata"]) if row["metadata"] else None,
+                "vector_distance": row["distance"],
+                "source": "vector",
+            }
+        )
 
     for row in fts_results:
         chunk_id = row["chunk_id"]
         if chunk_id in seen_chunk_ids:
             continue
         seen_chunk_ids.add(chunk_id)
-        merged.append({
-            "chunk_id": chunk_id,
-            "path": row["path"],
-            "file_type": row["file_type"],
-            "chunk_index": row["chunk_index"],
-            "content": row["content"],
-            "metadata": json.loads(row["metadata"]) if row["metadata"] else None,
-            "fts_score": row["score"],
-            "source": "fts",
-        })
+        merged.append(
+            {
+                "chunk_id": chunk_id,
+                "path": row["path"],
+                "file_type": row["file_type"],
+                "chunk_index": row["chunk_index"],
+                "content": row["content"],
+                "metadata": json.loads(row["metadata"]) if row["metadata"] else None,
+                "fts_score": row["score"],
+                "source": "fts",
+            }
+        )
 
     return merged[:limit]
 
@@ -100,9 +104,7 @@ async def trove_similar(
         raise InvalidInputError(str(exc)) from exc
     file_path, limit = params.file_path, params.limit
 
-    existing = db.query_one(
-        "SELECT id FROM files WHERE path = ?", (file_path,)
-    )
+    existing = db.query_one("SELECT id FROM files WHERE path = ?", (file_path,))
     if not existing:
         raise FileNotIndexedError(file_path)
 
@@ -121,8 +123,7 @@ async def trove_similar(
 
     dims = len(all_embeddings[0])
     avg_embedding = [
-        sum(emb[d] for emb in all_embeddings) / len(all_embeddings)
-        for d in range(dims)
+        sum(emb[d] for emb in all_embeddings) / len(all_embeddings) for d in range(dims)
     ]
 
     vec_results = db.search_vectors(avg_embedding, limit + 10)
@@ -136,12 +137,14 @@ async def trove_similar(
         if row_path in seen_paths:
             continue
         seen_paths.add(row_path)
-        similar_files.append({
-            "path": row_path,
-            "file_type": row["file_type"],
-            "distance": row["distance"],
-            "sample_content": row["content"][:200],
-        })
+        similar_files.append(
+            {
+                "path": row_path,
+                "file_type": row["file_type"],
+                "distance": row["distance"],
+                "sample_content": row["content"][:200],
+            }
+        )
         if len(similar_files) >= limit:
             break
 

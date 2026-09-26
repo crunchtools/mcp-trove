@@ -35,9 +35,7 @@ class TestToolCount:
 class TestIndexTools:
     @pytest.mark.asyncio
     async def test_index_single_file(self, in_memory_db: sqlite3.Connection) -> None:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("This is a test document about Python programming.")
             path = f.name
 
@@ -61,9 +59,7 @@ class TestIndexTools:
 
     @pytest.mark.asyncio
     async def test_index_skips_unchanged(self, in_memory_db: sqlite3.Connection) -> None:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("Unchanged content here.")
             path = f.name
 
@@ -83,9 +79,7 @@ class TestIndexTools:
 
     @pytest.mark.asyncio
     async def test_reindex_file(self, in_memory_db: sqlite3.Connection) -> None:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("Content to be reindexed.")
             path = f.name
 
@@ -97,9 +91,7 @@ class TestIndexTools:
 
     @pytest.mark.asyncio
     async def test_reindex_all(self, in_memory_db: sqlite3.Connection) -> None:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("Content for reindex all test.")
             path = f.name
 
@@ -111,9 +103,7 @@ class TestIndexTools:
 
     @pytest.mark.asyncio
     async def test_remove_file(self, in_memory_db: sqlite3.Connection) -> None:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("Content to be removed.")
             path = f.name
 
@@ -136,18 +126,14 @@ class TestSearchTools:
     @pytest.fixture(autouse=True)
     async def _setup_indexed_files(self, in_memory_db: sqlite3.Connection) -> None:
         """Seed the index with test files."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write(
                 "Python is a programming language known for its simplicity. "
                 "It is widely used in data science, web development, and automation."
             )
             self._file1 = f.name
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write(
                 "Rust is a systems programming language focused on safety and performance. "
                 "It prevents memory errors at compile time."
@@ -200,9 +186,7 @@ class TestStatusTools:
 
     @pytest.mark.asyncio
     async def test_status_with_files(self, in_memory_db: sqlite3.Connection) -> None:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("Status test content.")
             path = f.name
 
@@ -220,9 +204,7 @@ class TestStatusTools:
 
     @pytest.mark.asyncio
     async def test_list_with_files(self, in_memory_db: sqlite3.Connection) -> None:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("List test content.")
             path = f.name
 
@@ -237,9 +219,7 @@ class TestStatusTools:
 
     @pytest.mark.asyncio
     async def test_get_chunks(self, in_memory_db: sqlite3.Connection) -> None:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("Chunk test content for inspection.")
             path = f.name
 
@@ -266,9 +246,7 @@ class TestStatusTools:
 
     @pytest.mark.asyncio
     async def test_log_after_index(self, in_memory_db: sqlite3.Connection) -> None:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("Log test content for indexing.")
             path = f.name
 
@@ -285,9 +263,7 @@ class TestStatusTools:
 
     @pytest.mark.asyncio
     async def test_status_includes_last_run(self, in_memory_db: sqlite3.Connection) -> None:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("Last run test content.")
             path = f.name
 
@@ -313,12 +289,16 @@ class TestStatusTools:
 
         run_id = test_db.start_run("/nonexistent/test", 1)
         test_db.insert_error(
-            run_id, "/nonexistent/test/bad.pdf",
-            "connection reset by peer", "transient",
+            run_id,
+            "/nonexistent/test/bad.pdf",
+            "connection reset by peer",
+            "transient",
         )
         test_db.insert_error(
-            run_id, "/nonexistent/test/corrupt.pdf",
-            "invalid PDF structure", "permanent",
+            run_id,
+            "/nonexistent/test/corrupt.pdf",
+            "invalid PDF structure",
+            "permanent",
         )
 
         result = await trove_quality()

@@ -187,9 +187,7 @@ def _store_one(extraction: dict[str, Any]) -> dict[str, str | int]:
 
     embeddings = embed_texts(chunks)
 
-    for idx, (chunk_content, embedding) in enumerate(
-        zip(chunks, embeddings, strict=True)
-    ):
+    for idx, (chunk_content, embedding) in enumerate(zip(chunks, embeddings, strict=True)):
         chunk_id = db.insert_chunk(file_id, idx, chunk_content)
         db.insert_vector(chunk_id, embedding)
 
@@ -211,8 +209,10 @@ def index_file(path: Path, force: bool = False) -> dict[str, str | int]:
                 db.update_file_mtime(existing["id"], mtime)
             db.finish_run(
                 run_id,
-                files_indexed=0, files_skipped=1,
-                files_errored=0, total_chunks=0,
+                files_indexed=0,
+                files_skipped=1,
+                files_errored=0,
+                total_chunks=0,
             )
             file_status: dict[str, str | int] = {
                 "path": str(resolved),
@@ -223,12 +223,17 @@ def index_file(path: Path, force: bool = False) -> dict[str, str | int]:
         else:
             existing_id = existing["id"] if existing else None
             extraction = _extract_one(
-                resolved, checksum, file_size, existing_id, mtime,
+                resolved,
+                checksum,
+                file_size,
+                existing_id,
+                mtime,
             )
             file_status = _store_one(extraction)
             db.finish_run(
                 run_id,
-                files_indexed=1, files_skipped=0,
+                files_indexed=1,
+                files_skipped=0,
                 files_errored=0,
                 total_chunks=int(file_status.get("chunk_count", 0)),
             )
@@ -239,7 +244,8 @@ def index_file(path: Path, force: bool = False) -> dict[str, str | int]:
 
 
 def _partition_unchanged(
-    files: list[Path], force: bool,
+    files: list[Path],
+    force: bool,
 ) -> tuple[
     list[dict[str, str | int]],
     list[tuple[Path, str, int, int | None, float]],
@@ -253,12 +259,14 @@ def _partition_unchanged(
             # Backfill mtime if DB has NULL so fast-skip works next run
             if existing["mtime"] is None:
                 db.update_file_mtime(existing["id"], mtime)
-            skipped.append({
-                "path": str(fp.resolve()),
-                "status": "skipped",
-                "reason": "unchanged",
-                "chunk_count": 0,
-            })
+            skipped.append(
+                {
+                    "path": str(fp.resolve()),
+                    "status": "skipped",
+                    "reason": "unchanged",
+                    "chunk_count": 0,
+                }
+            )
         else:
             existing_id = existing["id"] if existing else None
             to_extract.append((fp, checksum, file_size, existing_id, mtime))
@@ -284,28 +292,38 @@ async def _extract_and_store_batched(
     extract_timeout = config.vision_timeout * 3
 
     async def extract_bounded(
-        file_path: Path, cs: str, fs: int, eid: int | None, mt: float,
+        file_path: Path,
+        cs: str,
+        fs: int,
+        eid: int | None,
+        mt: float,
     ) -> dict[str, Any]:
         async with semaphore:
             async with asyncio.timeout(extract_timeout):
                 return await asyncio.to_thread(
-                    _extract_one, file_path, cs, fs, eid, mt,
+                    _extract_one,
+                    file_path,
+                    cs,
+                    fs,
+                    eid,
+                    mt,
                 )
 
     logger.info(
         "Extracting %d files with %d workers in batches of %d",
-        len(to_extract), workers, batch_size,
+        len(to_extract),
+        workers,
+        batch_size,
     )
 
     for batch_num, chunk in enumerate(_batched(to_extract, batch_size)):
         logger.info(
-            "Batch %d: extracting %d files", batch_num + 1, len(chunk),
+            "Batch %d: extracting %d files",
+            batch_num + 1,
+            len(chunk),
         )
         extractions = await asyncio.gather(
-            *(
-                extract_bounded(fp, cs, fs, eid, mt)
-                for fp, cs, fs, eid, mt in chunk
-            ),
+            *(extract_bounded(fp, cs, fs, eid, mt) for fp, cs, fs, eid, mt in chunk),
             return_exceptions=True,
         )
 
@@ -315,17 +333,24 @@ async def _extract_and_store_batched(
                 err_path = str(chunk[idx][0])
                 err_msg = str(raw)
                 logger.warning(
-                    "Failed to extract %s: %s", chunk[idx][0], raw,
+                    "Failed to extract %s: %s",
+                    chunk[idx][0],
+                    raw,
                 )
                 db.insert_error(
-                    run_id, err_path, err_msg, db.classify_error(err_msg),
+                    run_id,
+                    err_path,
+                    err_msg,
+                    db.classify_error(err_msg),
                 )
-                results.append({
-                    "path": err_path,
-                    "status": "error",
-                    "reason": err_msg,
-                    "chunk_count": 0,
-                })
+                results.append(
+                    {
+                        "path": err_path,
+                        "status": "error",
+                        "reason": err_msg,
+                        "chunk_count": 0,
+                    }
+                )
                 continue
             results.append(_store_one(raw))
         del extractions
@@ -334,18 +359,10 @@ async def _extract_and_store_batched(
         if run_id is not None:
             db.update_run_progress(
                 run_id,
-                files_indexed=sum(
-                    1 for r in results if r["status"] == "indexed"
-                ),
-                files_skipped=sum(
-                    1 for r in results if r["status"] == "skipped"
-                ),
-                files_errored=sum(
-                    1 for r in results if r["status"] == "error"
-                ),
-                total_chunks=sum(
-                    int(r.get("chunk_count", 0)) for r in results
-                ),
+                files_indexed=sum(1 for r in results if r["status"] == "indexed"),
+                files_skipped=sum(1 for r in results if r["status"] == "skipped"),
+                files_errored=sum(1 for r in results if r["status"] == "error"),
+                total_chunks=sum(int(r.get("chunk_count", 0)) for r in results),
             )
 
         # Force Python to release memory back to the OS.
@@ -404,8 +421,10 @@ async def index_path_async(
         total_chunks = sum(int(r.get("chunk_count", 0)) for r in results)
         db.finish_run(
             run_id,
-            files_indexed=indexed, files_skipped=skipped,
-            files_errored=errored, total_chunks=total_chunks,
+            files_indexed=indexed,
+            files_skipped=skipped,
+            files_errored=errored,
+            total_chunks=total_chunks,
         )
     except Exception as exc:
         db.log_run_error(run_id, str(exc))
@@ -439,9 +458,7 @@ def remove_path(path: Path) -> dict[str, str | int]:
     resolved_str = str(resolved)
 
     if resolved.is_file() or not resolved.exists():
-        existing = db.query_one(
-            "SELECT id FROM files WHERE path = ?", (resolved_str,)
-        )
+        existing = db.query_one("SELECT id FROM files WHERE path = ?", (resolved_str,))
         if existing:
             db.delete_file_data(existing["id"])
             return {"path": resolved_str, "removed": 1}

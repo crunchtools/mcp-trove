@@ -95,9 +95,7 @@ class TestIsSupported:
 
 class TestExtractText:
     def test_extract_plain_text(self) -> None:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("Hello, world!")
             path = f.name
 
@@ -106,9 +104,7 @@ class TestExtractText:
         Path(path).unlink()
 
     def test_extract_markdown(self) -> None:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".md", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
             f.write("# Title\n\nParagraph text.")
             path = f.name
 
@@ -118,9 +114,7 @@ class TestExtractText:
         Path(path).unlink()
 
     def test_extract_python_source(self) -> None:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write('def hello():\n    print("Hello")\n')
             path = f.name
 

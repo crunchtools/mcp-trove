@@ -10,6 +10,15 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-25
+
+### Added
+- **`openrouter` vision backend** (RT #1505). Captions images and videos through
+  OpenRouter chat completions, defaulting to `google/gemini-3.1-flash-lite` with
+  `google/gemini-3.8-flash` as the fallback model. Every request asks for
+  zero-retention providers that do not collect data. The key comes from
+  `OPENROUTER_API_KEY_FILE` (preferred) or `OPENROUTER_API_KEY`.
+
 ## [0.5.1] - 2026-03-21
 
 Three fixes for an 8-hour indexing hang.

@@ -17,10 +17,7 @@ DEFAULT_CHUNK_OVERLAP = 200
 DEFAULT_INDEX_WORKERS = 20
 DEFAULT_INDEX_BATCH = 50
 DEFAULT_VISION_TIMEOUT = 120  # seconds per vision API call
-DEFAULT_EXCLUDE_PATTERNS = (
-    "*.iso,*.zip,*.tar.gz,*.tar.bz2,*.7z,*.rar,"
-    "*.exe,*.dll,*.bin,*.dat"
-)
+DEFAULT_EXCLUDE_PATTERNS = "*.iso,*.zip,*.tar.gz,*.tar.bz2,*.7z,*.rar,*.exe,*.dll,*.bin,*.dat"
 
 DEFAULT_VISION_PROMPT = (
     "Generate a concise caption for this image suitable for search indexing. "
@@ -39,40 +36,24 @@ class Config:
     _api_token: SecretStr | None = None
 
     def __init__(self) -> None:
-        default_db = str(
-            Path.home() / ".local" / "share" / "mcp-trove" / "trove.db"
-        )
+        default_db = str(Path.home() / ".local" / "share" / "mcp-trove" / "trove.db")
         self.db_path: str = os.environ.get("TROVE_DB", default_db)
-        self.index_paths: list[str] = _parse_paths(
-            os.environ.get("TROVE_PATHS", "")
-        )
+        self.index_paths: list[str] = _parse_paths(os.environ.get("TROVE_PATHS", ""))
         self.index_workers: int = int(
             os.environ.get("TROVE_INDEX_WORKERS", str(DEFAULT_INDEX_WORKERS))
         )
-        self.index_batch: int = int(
-            os.environ.get("TROVE_INDEX_BATCH", str(DEFAULT_INDEX_BATCH))
-        )
-        self.embedding_model: str = os.environ.get(
-            "TROVE_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL
-        )
+        self.index_batch: int = int(os.environ.get("TROVE_INDEX_BATCH", str(DEFAULT_INDEX_BATCH)))
+        self.embedding_model: str = os.environ.get("TROVE_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
         self.exclude_patterns: list[str] = _parse_exclude(
             os.environ.get("TROVE_EXCLUDE_PATTERNS", DEFAULT_EXCLUDE_PATTERNS)
         )
-        self.chunk_size: int = int(
-            os.environ.get("TROVE_CHUNK_SIZE", str(DEFAULT_CHUNK_SIZE))
-        )
+        self.chunk_size: int = int(os.environ.get("TROVE_CHUNK_SIZE", str(DEFAULT_CHUNK_SIZE)))
         self.chunk_overlap: int = int(
             os.environ.get("TROVE_CHUNK_OVERLAP", str(DEFAULT_CHUNK_OVERLAP))
         )
-        self.vision_backend: str = os.environ.get(
-            "TROVE_VISION_BACKEND", "none"
-        ).lower()
-        self.vision_model: str = os.environ.get(
-            "TROVE_VISION_MODEL", self._default_vision_model()
-        )
-        self.vision_prompt: str = os.environ.get(
-            "TROVE_VISION_PROMPT", DEFAULT_VISION_PROMPT
-        )
+        self.vision_backend: str = os.environ.get("TROVE_VISION_BACKEND", "none").lower()
+        self.vision_model: str = os.environ.get("TROVE_VISION_MODEL", self._default_vision_model())
+        self.vision_prompt: str = os.environ.get("TROVE_VISION_PROMPT", DEFAULT_VISION_PROMPT)
         self.vision_timeout: int = int(
             os.environ.get("TROVE_VISION_TIMEOUT", str(DEFAULT_VISION_TIMEOUT))
         )
@@ -82,6 +63,7 @@ class Config:
         defaults = {
             "gemini": "gemini-2.5-flash",
             "openai": "gpt-4o-mini",
+            "openrouter": "google/gemini-3.1-flash-lite",
             "ollama": "llava",
         }
         return defaults.get(self.vision_backend, "")

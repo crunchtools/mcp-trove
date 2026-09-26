@@ -17,10 +17,10 @@ This constitution establishes the core principles, constraints, and workflows th
 Every change MUST preserve all five security layers. No exceptions.
 
 **Layer 1 — Credential Protection:**
-- N/A — This server has no external API credentials
-- No tokens, API keys, or passwords are required or stored
-- The server indexes local files and stores embeddings locally
-- SecretStr pattern available in config.py if credentials are added in future
+- Indexing and search need no credentials; embeddings are computed and stored locally
+- Optional vision backends (gemini, openai, openrouter) read an API key from the
+  environment, `_FILE` variant preferred where supported
+- Keys are held as `SecretStr`, never logged, and only sent to the backend's own API
 
 **Layer 2 — Input Validation:**
 - Pydantic models enforce strict data types with `extra="forbid"`

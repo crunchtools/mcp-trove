@@ -29,13 +29,9 @@ async def trove_status() -> dict[str, Any]:
         "FROM files"
     )
 
-    type_counts = db.query(
-        "SELECT file_type, COUNT(*) as count FROM files GROUP BY file_type"
-    )
+    type_counts = db.query("SELECT file_type, COUNT(*) as count FROM files GROUP BY file_type")
 
-    last_indexed = db.query_one(
-        "SELECT indexed_at FROM files ORDER BY indexed_at DESC LIMIT 1"
-    )
+    last_indexed = db.query_one("SELECT indexed_at FROM files ORDER BY indexed_at DESC LIMIT 1")
 
     last_run = db.query_one(
         "SELECT id, started_at, finished_at, path, status, "
@@ -120,9 +116,7 @@ async def trove_get_chunks(
         raise InvalidInputError(str(exc)) from exc
     file_path, limit = params.file_path, params.limit
 
-    existing = db.query_one(
-        "SELECT id FROM files WHERE path = ?", (file_path,)
-    )
+    existing = db.query_one("SELECT id FROM files WHERE path = ?", (file_path,))
     if not existing:
         raise FileNotIndexedError(file_path)
 
