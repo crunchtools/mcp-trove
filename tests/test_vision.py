@@ -330,3 +330,20 @@ class TestOpenRouterBackend:
         with pytest.raises(ExtractionError, match="inline media limit"):
             backend.caption(clip, "video")
         backend._client.chat.completions.create.assert_not_called()
+
+    def test_unreadable_key_file(self, tmp_path: Path) -> None:
+        backend = OpenRouterBackend("google/gemini-3.1-flash-lite", "describe this")
+        with (
+            patch.dict(os.environ, {"OPENROUTER_API_KEY_FILE": str(tmp_path / "missing")}),
+            patch.dict(sys.modules, {"openai": MagicMock()}),
+            pytest.raises(ExtractionError, match="cannot read OPENROUTER_API_KEY_FILE"),
+        ):
+            backend._get_client()
+
+    def test_openai_not_installed(self) -> None:
+        backend = OpenRouterBackend("google/gemini-3.1-flash-lite", "describe this")
+        with (
+            patch.dict(sys.modules, {"openai": None}),
+            pytest.raises(ExtractionError, match="openai not installed"),
+        ):
+            backend._get_client()

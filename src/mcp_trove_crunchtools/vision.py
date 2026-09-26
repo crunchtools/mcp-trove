@@ -223,8 +223,7 @@ class OpenRouterBackend:
             )
         client = self._get_client()
         mime = _get_mime(path)
-        b64 = base64.b64encode(path.read_bytes()).decode("ascii")
-        data_url = f"data:{mime};base64,{b64}"
+        data_url = f"data:{mime};base64," + base64.b64encode(path.read_bytes()).decode("ascii")
         if file_type == "video":
             media = {"type": "video_url", "video_url": {"url": data_url}}
         else:
