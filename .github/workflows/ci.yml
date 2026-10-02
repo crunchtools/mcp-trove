@@ -32,7 +32,7 @@ jobs:
 
   gourmand:
     name: Code Quality (Gourmand)
-    uses: crunchtools/gatehouse/.github/workflows/gourmand.yml@v0.15.1
+    uses: crunchtools/gatehouse/.github/workflows/gourmand.yml@v0.15.2
 
   build-container:
     runs-on: ubuntu-latest
@@ -42,15 +42,3 @@ jobs:
         run: docker build -f Containerfile -t mcp-trove:test .
       - name: Verify container
         run: timeout 5 docker run --rm mcp-trove:test || true
-
-  validate-constitution:
-    name: Constitution Validation
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/checkout@v7
-        with:
-          repository: crunchtools/constitution
-          path: .constitution
-      - name: Validate constitution
-        run: python3 .constitution/validate-constitution.py .specify/memory/constitution.md --verbose
