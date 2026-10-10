@@ -9,6 +9,8 @@ from mcp_trove_crunchtools.models import (
     GetChunksParams,
     IndexParams,
     ListParams,
+    LogParams,
+    QualityParams,
     ReindexParams,
     RemoveParams,
     SearchParams,
@@ -118,3 +120,25 @@ class TestGetChunksParams:
     def test_extra_fields_rejected(self) -> None:
         with pytest.raises(ValidationError):
             GetChunksParams(file_path="/test", unknown="bad")  # type: ignore[call-arg]
+
+
+class TestLogParams:
+    def test_default(self) -> None:
+        assert LogParams().limit == 20
+
+    @pytest.mark.parametrize("limit", [0, -1, 501])
+    def test_limit_out_of_range(self, limit: int) -> None:
+        with pytest.raises(ValidationError):
+            LogParams(limit=limit)
+
+
+class TestQualityParams:
+    def test_default(self) -> None:
+        params = QualityParams()
+        assert params.limit == 100
+        assert params.show_resolved is False
+
+    @pytest.mark.parametrize("limit", [0, -1, 501])
+    def test_limit_out_of_range(self, limit: int) -> None:
+        with pytest.raises(ValidationError):
+            QualityParams(limit=limit)

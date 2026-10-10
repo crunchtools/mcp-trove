@@ -12,7 +12,7 @@ import pytest
 from mcp_trove_crunchtools import config as config_mod
 from mcp_trove_crunchtools import database as db_mod
 from mcp_trove_crunchtools import indexer as indexer_mod
-from mcp_trove_crunchtools.errors import DimensionMismatchError
+from mcp_trove_crunchtools.errors import DimensionMismatchError, InvalidInputError
 from mcp_trove_crunchtools.server import mcp
 from mcp_trove_crunchtools.tools.index import trove_index, trove_reindex, trove_remove
 from mcp_trove_crunchtools.tools.search import trove_search, trove_similar
@@ -335,6 +335,16 @@ class TestStatusTools:
 
         with pytest.raises(FileNotIndexedError):
             await trove_get_chunks("/nonexistent/file.txt")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("limit", [0, -1, 501])
+    async def test_log_and_quality_reject_bad_limit(
+        self, in_memory_db: sqlite3.Connection, limit: int
+    ) -> None:
+        with pytest.raises(InvalidInputError):
+            await trove_log(limit)
+        with pytest.raises(InvalidInputError):
+            await trove_quality(limit=limit)
 
     @pytest.mark.asyncio
     async def test_log_empty(self, in_memory_db: sqlite3.Connection) -> None:
