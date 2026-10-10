@@ -6,16 +6,17 @@ Uses sqlite-vec for vector search and FTS5 for keyword search.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from typing import Any
 
 import sqlite_vec
 
 from .config import get_config
+from .embedder import get_vector_dims
+from .errors import DimensionMismatchError
 
 _db: sqlite3.Connection | None = None
-
-VECTOR_DIMS = 384
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
@@ -87,12 +88,25 @@ CREATE INDEX IF NOT EXISTS idx_errors_path ON index_errors(path);
 CREATE INDEX IF NOT EXISTS idx_errors_resolved ON index_errors(resolved);
 """
 
-VEC_TABLE_SQL = f"""
+VEC_TABLE_SQL = """
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(
     chunk_id INTEGER PRIMARY KEY,
-    embedding float[{VECTOR_DIMS}]
+    embedding float[{dims}]
 );
 """
+
+
+def _ensure_vec_table(conn: sqlite3.Connection) -> None:
+    """Create chunks_vec for the configured model, or verify an existing one matches."""
+    model_name = get_config().embedding_model
+    model_dims = get_vector_dims(model_name)
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'chunks_vec'").fetchone()
+    if row is None:
+        conn.execute(VEC_TABLE_SQL.format(dims=model_dims))
+        return
+    match = re.search(r"float\[(\d+)\]", row[0])
+    if match and int(match.group(1)) != model_dims:
+        raise DimensionMismatchError(int(match.group(1)), model_name, model_dims)
 
 
 def _migrate_add_mtime(conn: sqlite3.Connection) -> None:
@@ -118,7 +132,12 @@ def get_db(db_path: str | None = None) -> sqlite3.Connection:
         sqlite_vec.load(_db)
         _db.enable_load_extension(False)
         _db.executescript(SCHEMA)
-        _db.execute(VEC_TABLE_SQL)
+        try:
+            _ensure_vec_table(_db)
+        except Exception:
+            _db.close()
+            _db = None
+            raise
         _migrate_add_mtime(_db)
         _db.commit()
     return _db

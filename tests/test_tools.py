@@ -9,8 +9,10 @@ from unittest.mock import patch
 
 import pytest
 
+from mcp_trove_crunchtools import config as config_mod
 from mcp_trove_crunchtools import database as db_mod
 from mcp_trove_crunchtools import indexer as indexer_mod
+from mcp_trove_crunchtools.errors import DimensionMismatchError
 from mcp_trove_crunchtools.server import mcp
 from mcp_trove_crunchtools.tools.index import trove_index, trove_reindex, trove_remove
 from mcp_trove_crunchtools.tools.search import trove_search, trove_similar
@@ -412,3 +414,32 @@ class TestStatusTools:
         result = await trove_quality()
         assert len(result["errors"]) == 1
         assert result["errors"][0]["path"] == "/nonexistent/test/corrupt.pdf"
+
+
+class TestVectorDimensions:
+    """The vector table size follows the configured embedding model."""
+
+    def test_dims_from_model_metadata(self) -> None:
+        from mcp_trove_crunchtools.embedder import get_vector_dims
+
+        assert get_vector_dims("BAAI/bge-small-en-v1.5") == 384
+        assert get_vector_dims("intfloat/multilingual-e5-large") == 1024
+
+    def test_new_database_uses_model_dims(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("TROVE_EMBEDDING_MODEL", "intfloat/multilingual-e5-large")
+        conn = db_mod.get_db(str(tmp_path / "t.db"))
+        sql = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'chunks_vec'").fetchone()[0]
+        assert "float[1024]" in sql
+
+    def test_mismatch_fails_with_both_dims(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        path = str(tmp_path / "t.db")
+        db_mod.get_db(path).close()
+        db_mod._db = None
+        config_mod._config = None
+        monkeypatch.setenv("TROVE_EMBEDDING_MODEL", "intfloat/multilingual-e5-large")
+        with pytest.raises(DimensionMismatchError, match=r"384.*1024"):
+            db_mod.get_db(path)

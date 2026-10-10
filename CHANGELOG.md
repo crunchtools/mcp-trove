@@ -10,6 +10,13 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+### Fixed
+- The `chunks_vec` vector size now comes from the configured
+  `TROVE_EMBEDDING_MODEL` instead of a hardcoded 384. Opening an existing
+  database whose vector size differs from the model fails at startup with an
+  error naming both sizes; reindex into a new database (`TROVE_DB`). The
+  database is never rebuilt automatically.
+
 ## [0.7.0] - 2026-10-10
 
 ### Added
