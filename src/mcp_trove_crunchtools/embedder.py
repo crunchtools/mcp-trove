@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .config import get_config
-from .errors import EmbeddingError
+from .errors import EmbeddingError, UnknownEmbeddingModelError
 
 if TYPE_CHECKING:
     from fastembed import TextEmbedding
@@ -22,6 +22,16 @@ def get_model() -> TextEmbedding:
         model_name = get_config().embedding_model
         _model = TextEmbedding(model_name=model_name)
     return _model
+
+
+def get_vector_dims(model_name: str) -> int:
+    """Return the output dimension of a fastembed model from its metadata."""
+    from fastembed import TextEmbedding
+
+    for entry in TextEmbedding.list_supported_models():
+        if entry["model"].lower() == model_name.lower():
+            return int(entry["dim"])
+    raise UnknownEmbeddingModelError(model_name)
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
