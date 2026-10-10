@@ -11,7 +11,9 @@ import pytest
 from mcp_trove_crunchtools import config as config_mod
 from mcp_trove_crunchtools import database as db_mod
 from mcp_trove_crunchtools import embedder as embedder_mod
+from mcp_trove_crunchtools import indexer as indexer_mod
 from mcp_trove_crunchtools import vision as vision_mod
+from mcp_trove_crunchtools.tools import search as search_mod
 
 if TYPE_CHECKING:
     import sqlite3
@@ -60,8 +62,8 @@ def _reset_singletons() -> Generator[None]:
 def _mock_embedder() -> Generator[None]:
     """Mock the embedder functions to avoid loading real models in tests."""
     with (
-        patch.object(embedder_mod, "embed_texts", side_effect=_mock_embed_texts),
-        patch.object(embedder_mod, "embed_query", side_effect=_mock_embed_query),
+        patch.object(indexer_mod, "embed_texts", side_effect=_mock_embed_texts),
+        patch.object(search_mod, "embed_query", side_effect=_mock_embed_query),
     ):
         yield
 

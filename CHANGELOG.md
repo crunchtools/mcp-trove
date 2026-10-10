@@ -11,6 +11,8 @@ reconstructed from their commit ranges in RT #1485.
 ## [Unreleased]
 
 ### Fixed
+- `trove_log` and `trove_quality` now validate `limit` (1-500) and raise
+  `InvalidInputError` instead of passing it straight to SQLite.
 - The `chunks_vec` vector size now comes from the configured
   `TROVE_EMBEDDING_MODEL` instead of a hardcoded 384. Opening an existing
   database whose vector size differs from the model fails at startup with an

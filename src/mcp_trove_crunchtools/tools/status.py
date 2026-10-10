@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from .. import database as db
 from ..config import get_config
 from ..errors import FileNotIndexedError, InvalidInputError
-from ..models import GetChunksParams, ListParams
+from ..models import GetChunksParams, ListParams, LogParams, QualityParams
 
 # Effectively "all" errors for the total/resolved/unresolved counts below --
 # a practical upper bound on a per-file error log, not a paginated result.
@@ -95,6 +95,12 @@ async def trove_list(
 
 async def trove_log(limit: int = 20) -> list[dict[str, Any]]:
     """Return recent index runs from the activity log."""
+    try:
+        params = LogParams(limit=limit)
+    except ValidationError as exc:
+        raise InvalidInputError(str(exc)) from exc
+    limit = params.limit
+
     rows = db.query(
         "SELECT id, started_at, finished_at, path, status, "
         "files_found, files_indexed, files_skipped, files_errored, "
@@ -144,6 +150,12 @@ async def trove_quality(
     limit: int = 100,
 ) -> dict[str, Any]:
     """Per-file error summary and details from indexing runs."""
+    try:
+        params = QualityParams(path=path, show_resolved=show_resolved, limit=limit)
+    except ValidationError as exc:
+        raise InvalidInputError(str(exc)) from exc
+    path, show_resolved, limit = params.path, params.show_resolved, params.limit
+
     resolved_filter: bool | None = None if show_resolved else False
     errors = db.query_errors(resolved=resolved_filter, path=path, limit=limit)
 

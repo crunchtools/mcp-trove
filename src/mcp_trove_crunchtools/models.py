@@ -10,6 +10,8 @@ DEFAULT_SEARCH_LIMIT = 10
 MAX_SEARCH_LIMIT = 100
 DEFAULT_LIST_LIMIT = 50
 MAX_LIST_LIMIT = 500
+DEFAULT_LOG_LIMIT = 20
+DEFAULT_QUALITY_LIMIT = 100
 
 
 class SearchParams(BaseModel, extra="forbid"):
@@ -58,3 +60,17 @@ class GetChunksParams(BaseModel, extra="forbid"):
 
     file_path: str = Field(..., min_length=1, max_length=MAX_PATH_LENGTH)
     limit: int = Field(default=DEFAULT_LIST_LIMIT, ge=1, le=MAX_LIST_LIMIT)
+
+
+class LogParams(BaseModel, extra="forbid"):
+    """Parameters for the indexing activity log."""
+
+    limit: int = Field(default=DEFAULT_LOG_LIMIT, ge=1, le=MAX_LIST_LIMIT)
+
+
+class QualityParams(BaseModel, extra="forbid"):
+    """Parameters for the per-file error report."""
+
+    path: str | None = Field(default=None, max_length=MAX_PATH_LENGTH)
+    show_resolved: bool = False
+    limit: int = Field(default=DEFAULT_QUALITY_LIMIT, ge=1, le=MAX_LIST_LIMIT)
