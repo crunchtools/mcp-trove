@@ -7,12 +7,12 @@
     "url": "https://github.com/crunchtools/mcp-trove",
     "source": "github"
   },
-  "version": "0.1.0",
+  "version": "0.7.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "mcp-trove-crunchtools",
-      "version": "0.1.0",
+      "version": "0.7.0",
       "transport": {
         "type": "stdio"
       }

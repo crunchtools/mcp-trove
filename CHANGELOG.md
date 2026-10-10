@@ -10,11 +10,29 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-10
+
+### Added
+- The seven tools that only read (`trove_search`, `trove_similar`,
+  `trove_status`, `trove_log`, `trove_list`, `trove_get_chunks`,
+  `trove_quality`) publish `readOnlyHint: true`. A gateway uses it to decide
+  whether an invalid optional argument may be dropped or must refuse the call
+  (crunchtools/constitution#35).
+- Tests pin every registered tool into `READ_ONLY` or `WRITES`, and run each
+  read-only tool against a SQLite connection set to `query_only`, which raises
+  on any statement that would change the database.
+
 ### Changed
+- Inherits constitution v1.22.0; the workflow pins and the pre-commit hook rev
+  move with it.
 - Constitution is now a v1.18.0 manifest: only repo-specific facts remain;
   fleet and profile rules apply by reference.
 - Constitution validation is pinned via `.github/workflows/constitution.yml`.
 - Dependabot auto-merges GitHub Actions minor and patch updates.
+
+### Fixed
+- `server.json` said 0.1.0 and the Containerfile label 0.2.0 through the 0.6.0
+  release; both carry the release version again.
 
 ## [0.6.0] - 2026-09-25
 

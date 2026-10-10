@@ -5,9 +5,12 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
+from mcp_trove_crunchtools import database as db_mod
+from mcp_trove_crunchtools import indexer as indexer_mod
 from mcp_trove_crunchtools.server import mcp
 from mcp_trove_crunchtools.tools.index import trove_index, trove_reindex, trove_remove
 from mcp_trove_crunchtools.tools.search import trove_search, trove_similar
@@ -21,6 +24,7 @@ from mcp_trove_crunchtools.tools.status import (
 
 if TYPE_CHECKING:
     import sqlite3
+    from collections.abc import AsyncIterator
 
 EXPECTED_TOOL_COUNT = 10
 
@@ -30,6 +34,97 @@ class TestToolCount:
     async def test_tool_count(self) -> None:
         tools = await mcp.list_tools()
         assert len(tools) == EXPECTED_TOOL_COUNT
+
+
+READ_ONLY = frozenset(
+    {
+        "trove_search_tool",
+        "trove_similar_tool",
+        "trove_status_tool",
+        "trove_log_tool",
+        "trove_list_tool",
+        "trove_get_chunks_tool",
+        "trove_quality_tool",
+    }
+)
+WRITES = frozenset(
+    {
+        "trove_index_tool",
+        "trove_reindex_tool",
+        "trove_remove_tool",
+    }
+)
+
+
+class TestReadOnlyAnnotation:
+    """Every registered tool is classified, and the reads really only read."""
+
+    @pytest.fixture
+    async def indexed_file(self, in_memory_db: sqlite3.Connection) -> AsyncIterator[str]:
+        """Index one file, then make the connection refuse every write."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("Python is a programming language known for its simplicity.")
+            path = str(Path(f.name).resolve())
+        await trove_index(path)
+        run_id = db_mod.start_run(path, 1)
+        db_mod.insert_error(run_id, path, "connection reset by peer", "transient")
+        in_memory_db.execute("PRAGMA query_only = ON")
+        yield path
+        Path(path).unlink(missing_ok=True)
+
+    @pytest.mark.asyncio
+    async def test_every_tool_is_classified(self) -> None:
+        tools = await mcp.list_tools()
+        assert READ_ONLY.isdisjoint(WRITES)
+        assert {tool.name for tool in tools} == READ_ONLY | WRITES
+        annotated = {
+            tool.name
+            for tool in tools
+            if tool.annotations is not None
+            and tool.annotations.model_dump(by_alias=True).get("readOnlyHint") is True
+        }
+        assert annotated == READ_ONLY
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", sorted(READ_ONLY))
+    async def test_read_only_tool_writes_nothing(
+        self, name: str, indexed_file: str, in_memory_db: sqlite3.Connection
+    ) -> None:
+        """The backend is SQLite, so a write is a statement that changes the database.
+
+        `PRAGMA query_only` makes SQLite raise on any such statement, and
+        `total_changes` counts the rows a connection has inserted, updated or
+        deleted. The indexer's embedding and vision entry points must stay idle.
+        """
+        calls: dict[str, dict[str, object]] = {
+            "trove_search_tool": {"query": "programming language"},
+            "trove_similar_tool": {"file_path": indexed_file},
+            "trove_status_tool": {},
+            "trove_log_tool": {},
+            "trove_list_tool": {},
+            "trove_get_chunks_tool": {"file_path": indexed_file},
+            "trove_quality_tool": {"show_resolved": True},
+        }
+        assert calls.keys() == READ_ONLY
+        before = in_memory_db.total_changes
+        with (
+            patch.object(indexer_mod, "embed_texts") as embed_texts,
+            patch.object(indexer_mod, "extract_text") as extract_text,
+        ):
+            result = await mcp.call_tool(name, calls[name])
+        assert result.structured_content
+        assert in_memory_db.total_changes == before
+        embed_texts.assert_not_called()
+        extract_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", sorted(WRITES))
+    async def test_write_tool_is_caught_by_the_same_guard(
+        self, name: str, indexed_file: str
+    ) -> None:
+        """Control: the guard above refuses each write, so that test can fail."""
+        with pytest.raises(Exception, match="readonly database"):
+            await mcp.call_tool(name, {"path": indexed_file})
 
 
 class TestIndexTools:

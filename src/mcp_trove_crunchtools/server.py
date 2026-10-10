@@ -19,9 +19,13 @@ from .tools import (
     trove_status,
 )
 
+# A gateway drops an invalid optional argument only on a tool annotated read-only;
+# on anything else it refuses the call. Only tools that change nothing get this.
+READ_ONLY = {"readOnlyHint": True}
+
 mcp = FastMCP(
     "mcp-trove-crunchtools",
-    version="0.6.0",
+    version="0.7.0",
     instructions=(
         "Self-hosted local file indexing MCP server with semantic search. "
         "Index any local directory and search over contents using hybrid "
@@ -36,7 +40,7 @@ mcp = FastMCP(
 # --- Search Tools ---
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def trove_search_tool(
     query: str,
     path: str | None = None,
@@ -55,7 +59,7 @@ async def trove_search_tool(
     return await trove_search(query, path, limit)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def trove_similar_tool(
     file_path: str,
     limit: int = 10,
@@ -116,7 +120,7 @@ async def trove_remove_tool(path: str) -> dict[str, Any]:
 # --- Status Tools ---
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def trove_status_tool() -> dict[str, Any]:
     """Index statistics: total files, chunks, disk usage, model info.
 
@@ -126,7 +130,7 @@ async def trove_status_tool() -> dict[str, Any]:
     return await trove_status()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def trove_log_tool(
     limit: int = 20,
 ) -> list[dict[str, Any]]:
@@ -141,7 +145,7 @@ async def trove_log_tool(
     return await trove_log(limit)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def trove_list_tool(
     path: str | None = None,
     limit: int = 50,
@@ -159,7 +163,7 @@ async def trove_list_tool(
     return await trove_list(path, limit, offset)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def trove_get_chunks_tool(
     file_path: str,
     limit: int = 50,
@@ -175,7 +179,7 @@ async def trove_get_chunks_tool(
     return await trove_get_chunks(file_path, limit)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def trove_quality_tool(
     path: str | None = None,
     show_resolved: bool = False,
