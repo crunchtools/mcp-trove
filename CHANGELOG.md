@@ -10,6 +10,8 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-11
+
 ### Fixed
 - `trove_log` and `trove_quality` now validate `limit` (1-500) and raise
   `InvalidInputError` instead of passing it straight to SQLite.
