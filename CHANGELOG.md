@@ -10,6 +10,8 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-10-18
+
 ### Fixed
 - `TROVE_PATHS` is split on `os.pathsep` instead of a hardcoded `:`, so Windows
   paths with drive letters (`C:\Users\...`) are no longer broken apart. On
