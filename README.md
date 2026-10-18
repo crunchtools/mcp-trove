@@ -69,7 +69,7 @@ claude mcp add mcp-trove-crunchtools -- uvx mcp-trove-crunchtools
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TROVE_DB` | `~/.local/share/mcp-trove/trove.db` | SQLite database path |
-| `TROVE_PATHS` | (none) | Colon-separated directories to index in background mode |
+| `TROVE_PATHS` | (none) | Directories to index in background mode, separated by `:` (`;` on Windows) |
 | `TROVE_INDEX_WORKERS` | `20` | Concurrent embedding workers |
 | `TROVE_INDEX_BATCH` | `50` | Files per indexing batch |
 | `TROVE_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | fastembed model name |

@@ -10,6 +10,11 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+### Fixed
+- `TROVE_PATHS` is split on `os.pathsep` instead of a hardcoded `:`, so Windows
+  paths with drive letters (`C:\Users\...`) are no longer broken apart. On
+  Windows, separate directories with `;`. Thanks to @Ged-fi (#8).
+
 ## [0.7.1] - 2026-10-11
 
 ### Fixed
@@ -19,7 +24,8 @@ reconstructed from their commit ranges in RT #1485.
   `TROVE_EMBEDDING_MODEL` instead of a hardcoded 384. Opening an existing
   database whose vector size differs from the model fails at startup with an
   error naming both sizes; reindex into a new database (`TROVE_DB`). The
-  database is never rebuilt automatically.
+  database is never rebuilt automatically. Reported by @Ged-fi, who also
+  proposed a fix in #9 (#7).
 
 ## [0.7.0] - 2026-10-10
 
