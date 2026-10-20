@@ -13,7 +13,7 @@
 #     -- podman run -i --rm -v trove-data:/data -v ~/Documents:/docs:ro quay.io/crunchtools/mcp-trove
 
 # Stage 1: Builder (has a shell, dnf and build tools)
-FROM quay.io/hummingbird/python:latest-builder AS builder
+FROM quay.io/hummingbird/python:3.14-builder AS builder
 
 USER root
 RUN dnf install -y gcc && dnf clean all
@@ -35,7 +35,7 @@ RUN python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='BA
     && echo "Embedding model cached"
 
 # Stage 2: Runtime image (minimal, no build tools)
-FROM quay.io/hummingbird/python:latest
+FROM quay.io/hummingbird/python:3.14
 
 LABEL name="mcp-trove-crunchtools" \
       version="0.7.2" \
@@ -52,7 +52,7 @@ LABEL name="mcp-trove-crunchtools" \
 WORKDIR /app
 
 # libstdc++ from Hummingbird builder (not Fedora — different glibc)
-COPY --from=quay.io/hummingbird/python:latest-builder /usr/lib64/libstdc++.so.6* /usr/lib64/
+COPY --from=quay.io/hummingbird/python:3.14-builder /usr/lib64/libstdc++.so.6* /usr/lib64/
 COPY --from=builder /app/venv /app/venv
 COPY --from=builder --chown=65532:65532 /fastembed-cache /fastembed-cache
 ENV PATH="/app/venv/bin:$PATH"
