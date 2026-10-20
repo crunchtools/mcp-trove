@@ -10,6 +10,8 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-20
+
 ### Changed
 
 - Container base images pinned to `quay.io/hummingbird/python:3.14*` instead of
