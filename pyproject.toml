@@ -116,9 +116,12 @@ python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+# pymupdf ships partial annotations: pymupdf.open() is untyped, which strict
+# mode's disallow_untyped_calls rejects.
+untyped_calls_exclude = ["pymupdf"]
 
 [[tool.mypy.overrides]]
-module = ["fastembed", "pymupdf4llm", "docx", "sqlite_vec", "google", "google.genai", "openai", "PIL", "PIL.ExifTags"]
+module = ["fastembed", "pymupdf4llm", "pymupdf4llm.*", "docx", "sqlite_vec", "google", "google.genai", "openai", "PIL", "PIL.ExifTags"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

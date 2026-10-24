@@ -17,6 +17,8 @@ DEFAULT_CHUNK_OVERLAP = 200
 DEFAULT_INDEX_WORKERS = 20
 DEFAULT_INDEX_BATCH = 50
 DEFAULT_VISION_TIMEOUT = 120  # seconds per vision API call
+DEFAULT_PDF_MAX_PAGES = 5  # leading PDF pages indexed; 0 or negative = all
+DEFAULT_MAX_TEXT_CHARS = 5_000_000  # extracted text kept per file (~6k chunks)
 DEFAULT_EXCLUDE_PATTERNS = "*.iso,*.zip,*.tar.gz,*.tar.bz2,*.7z,*.rar,*.exe,*.dll,*.bin,*.dat"
 
 DEFAULT_VISION_PROMPT = (
@@ -50,6 +52,12 @@ class Config:
         self.chunk_size: int = int(os.environ.get("TROVE_CHUNK_SIZE", str(DEFAULT_CHUNK_SIZE)))
         self.chunk_overlap: int = int(
             os.environ.get("TROVE_CHUNK_OVERLAP", str(DEFAULT_CHUNK_OVERLAP))
+        )
+        self.pdf_max_pages: int = int(
+            os.environ.get("TROVE_PDF_MAX_PAGES", str(DEFAULT_PDF_MAX_PAGES))
+        )
+        self.max_text_chars: int = int(
+            os.environ.get("TROVE_MAX_TEXT_CHARS", str(DEFAULT_MAX_TEXT_CHARS))
         )
         self.vision_backend: str = os.environ.get("TROVE_VISION_BACKEND", "none").lower()
         self.vision_model: str = os.environ.get("TROVE_VISION_MODEL", self._default_vision_model())

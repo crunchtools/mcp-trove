@@ -4,13 +4,24 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
+from unittest.mock import patch
 
+from mcp_trove_crunchtools import database as db
+from mcp_trove_crunchtools import indexer as indexer_mod
 from mcp_trove_crunchtools.indexer import (
     MAX_FILE_SIZE,
+    _extract_one,
+    _store_one,
     chunk_text,
     compute_checksum,
     scan_directory,
 )
+
+if TYPE_CHECKING:
+    import sqlite3
+
+    import pytest
 
 
 class TestChecksum:
@@ -125,3 +136,45 @@ class TestScanDirectory:
 
             files = scan_directory(Path(tmpdir))
             assert len(files) == 2
+
+
+class TestLargeFileBounds:
+    """A huge document must not be chunked or embedded all at once (RT #1542)."""
+
+    def test_extracted_text_capped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TROVE_MAX_TEXT_CHARS", "2500")
+        monkeypatch.setenv("TROVE_CHUNK_SIZE", "1000")
+        monkeypatch.setenv("TROVE_CHUNK_OVERLAP", "0")
+        big = tmp_path / "big.txt"
+        big.write_text("x" * 10_000)
+
+        extraction = _extract_one(big, "sum", big.stat().st_size, None)
+
+        assert sum(len(c) for c in extraction["chunks"]) == 2500
+
+    def test_store_embeds_in_sub_batches(self, in_memory_db: sqlite3.Connection) -> None:
+        chunks = [f"chunk {i}" for i in range(5)]
+        extraction = {
+            "path": "/data/manual.pdf",
+            "status": "extracted",
+            "file_type": "pdf",
+            "checksum": "abc",
+            "file_size": 1,
+            "mtime": 0.0,
+            "chunks": chunks,
+            "existing_id": None,
+        }
+
+        with (
+            patch.object(indexer_mod, "EMBED_BATCH_SIZE", 2),
+            patch.object(
+                indexer_mod, "embed_texts", side_effect=lambda texts: [[0.1] * 384 for _ in texts]
+            ) as embed,
+        ):
+            result = _store_one(extraction)
+
+        assert result["chunk_count"] == 5
+        batch_sizes = [len(call.args[0]) for call in embed.call_args_list]
+        assert batch_sizes == [2, 2, 1]
+        rows = db.query("SELECT chunk_index, content FROM chunks ORDER BY chunk_index")
+        assert [(r["chunk_index"], r["content"]) for r in rows] == list(enumerate(chunks))

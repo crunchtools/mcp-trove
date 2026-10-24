@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from .config import get_config
 from .errors import ExtractionError, UnsupportedFileTypeError
 
 if TYPE_CHECKING:
@@ -136,12 +137,30 @@ def _extract_text_file(path: Path) -> str:
 
 
 def _extract_pdf(path: Path) -> str:
-    try:
-        import pymupdf4llm
+    """Convert the first TROVE_PDF_MAX_PAGES pages of a PDF to markdown.
 
-        markdown: str = pymupdf4llm.to_markdown(str(path))
+    Converting a whole 20-80 MB service manual OOM-killed a 1.5 GB indexer
+    (RT #1542); the opening pages are enough to tell what a document is about.
+    """
+    try:
+        import pymupdf
+        import pymupdf4llm
+        from pymupdf4llm.helpers.pymupdf_rag import IdentifyHeaders
     except ImportError as exc:
         raise ExtractionError(str(path), "pymupdf4llm not installed") from exc
+
+    max_pages = get_config().pdf_max_pages
+    try:
+        with pymupdf.open(str(path)) as doc:
+            page_count = doc.page_count
+            if max_pages > 0:
+                page_count = min(max_pages, page_count)
+            pages = list(range(page_count))
+            # to_markdown's default header detection scans every page of the
+            # document, not just `pages`, so it is built over the same pages.
+            markdown: str = pymupdf4llm.to_markdown(
+                doc, pages=pages, hdr_info=IdentifyHeaders(doc, pages=pages)
+            )
     except Exception as exc:
         raise ExtractionError(str(path), str(exc)) from exc
     return markdown
