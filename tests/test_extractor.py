@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from mcp_trove_crunchtools.errors import UnsupportedFileTypeError
+from mcp_trove_crunchtools.errors import ExtractionError, UnsupportedFileTypeError
 from mcp_trove_crunchtools.extractor import detect_file_type, extract_text, is_supported
 
 
@@ -220,3 +220,31 @@ class TestPdfPageCap:
 
         identify.assert_called_once()
         assert identify.call_args.kwargs["pages"] == [0, 1, 2]
+
+
+class TestPdfStoreRelease:
+    """MuPDF's global store outlives each document, so it is emptied after
+    every PDF; otherwise a long index run grows until it is OOM-killed
+    (RT #1542)."""
+
+    def test_store_emptied_after_pdf(self, tmp_path: Path) -> None:
+        import pymupdf
+
+        pdf_path = tmp_path / "manual.pdf"
+        _make_pdf(pdf_path, PDF_PAGES[:1])
+
+        with patch.object(pymupdf.TOOLS, "store_shrink") as shrink:
+            extract_text(pdf_path)
+
+        shrink.assert_called_once_with(100)
+
+    def test_store_emptied_when_extraction_fails(self, tmp_path: Path) -> None:
+        import pymupdf
+
+        pdf_path = tmp_path / "broken.pdf"
+        pdf_path.write_bytes(b"not a pdf")
+
+        with patch.object(pymupdf.TOOLS, "store_shrink") as shrink, pytest.raises(ExtractionError):
+            extract_text(pdf_path)
+
+        shrink.assert_called_once_with(100)

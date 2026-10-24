@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -163,6 +164,12 @@ def _extract_pdf(path: Path) -> str:
             )
     except Exception as exc:
         raise ExtractionError(str(path), str(exc)) from exc
+    finally:
+        # MuPDF keeps a process-wide store of fonts and images that closing a
+        # document doesn't empty; across thousands of PDFs it grew the indexer
+        # past its 1.5 GB limit (RT #1542).
+        pymupdf.TOOLS.store_shrink(100)
+        gc.collect()
     return markdown
 
 
