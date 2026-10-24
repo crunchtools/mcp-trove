@@ -10,6 +10,14 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-24
+
+### Fixed
+
+- MuPDF's process-wide font and image store is emptied after each PDF. It
+  grew across a long index run until the 1.5 GB indexer was OOM-killed
+  (RT #1542).
+
 ## [0.9.0] - 2026-10-24
 
 ### Added
