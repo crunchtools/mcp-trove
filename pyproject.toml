@@ -22,7 +22,7 @@ dependencies = [
     "pydantic>=2.0",
     "fastembed>=0.4",
     "sqlite-vec>=0.1",
-    "pymupdf4llm>=0.0.17,<2",
+    "pymupdf4llm>=0.0.17,<3",
     "python-docx>=1.0",
 ]
 
