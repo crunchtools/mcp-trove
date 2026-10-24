@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 HASH_BUFFER_SIZE = 65536
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+EMBED_BATCH_SIZE = 256  # chunks embedded per call, matching fastembed's default batch
 
 _T = Any  # generic element type for _batched
 
@@ -139,6 +140,14 @@ def _extract_one(
     text = extract_text(resolved)
     file_type = detect_file_type(resolved)
     config = get_config()
+    if len(text) > config.max_text_chars:
+        logger.warning(
+            "Truncating %s from %d to %d characters (TROVE_MAX_TEXT_CHARS)",
+            resolved,
+            len(text),
+            config.max_text_chars,
+        )
+        text = text[: config.max_text_chars]
     chunks = chunk_text(text, config.chunk_size, config.chunk_overlap)
 
     return {
@@ -185,11 +194,23 @@ def _store_one(extraction: dict[str, Any]) -> dict[str, str | int]:
         db.resolve_errors(path_str)
         return {"path": path_str, "status": "indexed", "chunk_count": 0}
 
-    embeddings = embed_texts(chunks)
-
-    for idx, (chunk_content, embedding) in enumerate(zip(chunks, embeddings, strict=True)):
-        chunk_id = db.insert_chunk(file_id, idx, chunk_content)
-        db.insert_vector(chunk_id, embedding)
+    # Embed in sub-batches so a large file's vectors are never all held as
+    # Python float lists at once (RT #1542). Batches are stored as they go,
+    # so a failure part way removes the file record and its stored chunks:
+    # a half-indexed file would otherwise match its checksum and be skipped
+    # as unchanged on every later run.
+    try:
+        for start in range(0, len(chunks), EMBED_BATCH_SIZE):
+            batch = chunks[start : start + EMBED_BATCH_SIZE]
+            embeddings = embed_texts(batch)
+            for offset, (chunk_content, embedding) in enumerate(
+                zip(batch, embeddings, strict=True)
+            ):
+                chunk_id = db.insert_chunk(file_id, start + offset, chunk_content)
+                db.insert_vector(chunk_id, embedding)
+    except Exception:
+        db.delete_file_data(file_id)
+        raise
 
     db.update_file(file_id, checksum, file_size, len(chunks), mtime)
     db.resolve_errors(path_str)

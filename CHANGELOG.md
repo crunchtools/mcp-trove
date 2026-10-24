@@ -10,6 +10,32 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+### Added
+
+- `TROVE_PDF_MAX_PAGES` (default `5`; `0` or negative for no cap): only the
+  first N pages of each PDF are converted and indexed, enough to tell what a
+  document is about.
+- `TROVE_MAX_TEXT_CHARS` (default `5000000`): extracted text kept per file of
+  any type; the rest is dropped with a warning. A non-positive value falls
+  back to the default.
+
+### Changed
+
+- PDFs are no longer indexed in full by default. Set `TROVE_PDF_MAX_PAGES=0`
+  to restore whole-document indexing.
+
+### Fixed
+
+- The indexer was OOM-killed in a 1.5 GB container converting 20-80 MB PDF
+  service manuals, because pymupdf4llm builds the whole document's markdown in
+  memory (RT #1542). The page cap bounds that work, and header detection is
+  scoped to the same pages (pymupdf4llm's default scans every page even when a
+  page list is given). Chunks are now embedded 256 at a time instead of all of
+  a file's chunks at once.
+- An embedding failure part way through a file no longer leaves its file record
+  behind. The record matched the file's checksum, so the file was skipped as
+  unchanged on every later run and never indexed.
+
 ## [0.8.1] - 2026-10-24
 
 ### Fixed

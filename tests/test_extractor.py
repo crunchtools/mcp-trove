@@ -149,3 +149,74 @@ class TestPdfDependency:
         doc.close()
 
         assert "Trove indexes PDFs" in extract_text(pdf_path)
+
+
+PDF_PAGES = tuple(f"Manual page {n} marker" for n in range(1, 8))
+
+
+def _make_pdf(path: Path, pages: tuple[str, ...]) -> None:
+    import pymupdf
+
+    doc = pymupdf.open()
+    for page_text in pages:
+        doc.new_page().insert_text((72, 72), page_text)
+    doc.save(str(path))
+    doc.close()
+
+
+class TestPdfPageCap:
+    """Only the first TROVE_PDF_MAX_PAGES pages of a PDF are converted.
+    Converting whole 20-80 MB manuals OOM-killed the indexer (RT #1542)."""
+
+    def test_default_cap_is_five_pages(self, tmp_path: Path) -> None:
+        pdf_path = tmp_path / "manual.pdf"
+        _make_pdf(pdf_path, PDF_PAGES)
+
+        text = extract_text(pdf_path)
+
+        for page_text in PDF_PAGES[:5]:
+            assert page_text in text
+        assert "Manual page 6 marker" not in text
+        assert "Manual page 7 marker" not in text
+
+    def test_cap_from_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TROVE_PDF_MAX_PAGES", "2")
+        pdf_path = tmp_path / "manual.pdf"
+        _make_pdf(pdf_path, PDF_PAGES)
+
+        text = extract_text(pdf_path)
+
+        assert "Manual page 2 marker" in text
+        assert "Manual page 3 marker" not in text
+
+    @pytest.mark.parametrize("cap", ["0", "-1"])
+    def test_non_positive_cap_converts_every_page(
+        self, cap: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TROVE_PDF_MAX_PAGES", cap)
+        pdf_path = tmp_path / "manual.pdf"
+        _make_pdf(pdf_path, PDF_PAGES)
+
+        text = extract_text(pdf_path)
+
+        for page_text in PDF_PAGES:
+            assert page_text in text
+
+    def test_header_scan_limited_to_capped_pages(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """to_markdown's default header detection reads every page of the
+        document even when `pages` is given, so the cap must reach it too."""
+        from pymupdf4llm.helpers import pymupdf_rag
+
+        monkeypatch.setenv("TROVE_PDF_MAX_PAGES", "3")
+        pdf_path = tmp_path / "manual.pdf"
+        _make_pdf(pdf_path, PDF_PAGES)
+
+        with patch.object(
+            pymupdf_rag, "IdentifyHeaders", wraps=pymupdf_rag.IdentifyHeaders
+        ) as identify:
+            extract_text(pdf_path)
+
+        identify.assert_called_once()
+        assert identify.call_args.kwargs["pages"] == [0, 1, 2]
