@@ -38,7 +38,7 @@ RUN python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='BA
 FROM quay.io/hummingbird/python:3.14
 
 LABEL name="mcp-trove-crunchtools" \
-      version="0.8.1" \
+      version="0.9.0" \
       summary="Self-hosted local file indexing MCP server with semantic search" \
       description="Index local directories and search over contents using hybrid vector + keyword search" \
       maintainer="crunchtools.com" \

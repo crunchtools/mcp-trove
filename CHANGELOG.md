@@ -10,6 +10,8 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-24
+
 ### Added
 
 - `TROVE_PDF_MAX_PAGES` (default `5`; `0` or negative for no cap): only the
