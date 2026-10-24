@@ -127,3 +127,25 @@ class TestExtractText:
 
         with pytest.raises(ExtractionError):
             extract_text(Path("/nonexistent/file.txt"))
+
+
+class TestPdfDependency:
+    """pymupdf4llm is a hard dependency. Its 2.0 release is an empty shim with
+    no module, so the lazy import in extractor.py failed every PDF at runtime
+    while the rest of the suite stayed green (RT #1542)."""
+
+    def test_pymupdf4llm_to_markdown_importable(self) -> None:
+        from pymupdf4llm import to_markdown
+
+        assert callable(to_markdown)
+
+    def test_extract_pdf(self, tmp_path: Path) -> None:
+        import pymupdf
+
+        pdf_path = tmp_path / "sample.pdf"
+        doc = pymupdf.open()
+        doc.new_page().insert_text((72, 72), "Trove indexes PDFs")
+        doc.save(str(pdf_path))
+        doc.close()
+
+        assert "Trove indexes PDFs" in extract_text(pdf_path)

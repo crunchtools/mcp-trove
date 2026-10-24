@@ -51,15 +51,16 @@ LABEL name="mcp-trove-crunchtools" \
 
 WORKDIR /app
 
-# libstdc++ from Hummingbird builder (not Fedora — different glibc)
-COPY --from=quay.io/hummingbird/python:3.14-builder /usr/lib64/libstdc++.so.6* /usr/lib64/
 COPY --from=builder /app/venv /app/venv
 COPY --from=builder --chown=65532:65532 /fastembed-cache /fastembed-cache
 ENV PATH="/app/venv/bin:$PATH"
 ENV FASTEMBED_CACHE_PATH=/fastembed-cache
 
 # Verify the install. Exec form: this stage has no /bin/sh for RUN's shell form.
-RUN ["python3", "-c", "from mcp_trove_crunchtools import main; print('Installation verified')"]
+# Import the PDF stack by name: extractor.py imports it lazily, so a hollow
+# pymupdf4llm (2.0 shipped as an empty shim, RT #1542) would otherwise pass
+# this check and fail every PDF at runtime.
+RUN ["python3", "-c", "from mcp_trove_crunchtools import main; import pymupdf, pymupdf4llm; pymupdf4llm.to_markdown; print('Installation verified')"]
 
 ENV TROVE_DB=/tmp/trove-data/trove.db
 ENV OMP_NUM_THREADS=4

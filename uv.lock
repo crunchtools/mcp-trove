@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -1383,7 +1383,7 @@ requires-dist = [
     { name = "openai", marker = "extra == 'vision'", specifier = ">=1.0" },
     { name = "openai", marker = "extra == 'vision-openai'", specifier = ">=1.0" },
     { name = "pydantic", specifier = ">=2.0" },
-    { name = "pymupdf4llm", specifier = ">=0.0.17" },
+    { name = "pymupdf4llm", specifier = ">=0.0.17,<2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "python-docx", specifier = ">=1.0" },
