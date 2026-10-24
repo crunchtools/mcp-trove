@@ -6,7 +6,7 @@ import argparse
 import asyncio
 from pathlib import Path
 
-__version__ = "0.8.0"
+__version__ = "0.8.1"
 
 
 def main() -> None:

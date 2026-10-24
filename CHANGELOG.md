@@ -10,6 +10,8 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-24
+
 ### Fixed
 
 - PDF indexing failed on every file with "pymupdf4llm not installed". pymupdf4llm
