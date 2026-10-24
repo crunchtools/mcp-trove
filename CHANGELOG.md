@@ -10,6 +10,14 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-10-24
+
+### Fixed
+
+- Embeddings are encoded 8 texts per ONNX pass instead of fastembed's
+  default 256. Long chunks at 256 per pass OOM-killed the 1.5 GB indexer on
+  a single large HTML table (RT #1542).
+
 ## [0.9.1] - 2026-10-24
 
 ### Fixed
