@@ -77,7 +77,7 @@ claude mcp add mcp-trove-crunchtools -- uvx mcp-trove-crunchtools
 | `TROVE_CHUNK_SIZE` | `1000` | Characters per text chunk |
 | `TROVE_CHUNK_OVERLAP` | `200` | Overlap between chunks |
 | `TROVE_PDF_MAX_PAGES` | `5` | Pages indexed from the start of each PDF, enough to tell what the document is about while keeping memory flat on large manuals; `0` or negative indexes every page |
-| `TROVE_MAX_TEXT_CHARS` | `5000000` | Characters of extracted text kept per file; the rest is dropped with a warning so one huge document cannot flood a batch with chunks |
+| `TROVE_MAX_TEXT_CHARS` | `5000000` | Characters of extracted text kept per file; the rest is dropped with a warning so one huge document cannot flood a batch with chunks; must be positive, other values fall back to the default with a warning |
 | `TROVE_VISION_BACKEND` | `none` | Vision captioning backend: `gemini`, `openai`, `openrouter`, `ollama`, or `none` to disable |
 | `TROVE_VISION_MODEL` | per backend | Vision model. Defaults to `gemini-2.5-flash`, `gpt-4o-mini`, `google/gemini-3.1-flash-lite` (openrouter) or `llava` depending on the backend; empty when disabled |
 | `TROVE_VISION_PROMPT` | (see below) | Caption prompt sent with each image |

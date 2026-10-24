@@ -20,7 +20,7 @@ uv run mcp-trove-crunchtools
 - `TROVE_CHUNK_SIZE` — Characters per text chunk (default: 1000)
 - `TROVE_CHUNK_OVERLAP` — Overlap between chunks (default: 200)
 - `TROVE_PDF_MAX_PAGES` — Leading PDF pages indexed, 0 or negative for all (default: 5)
-- `TROVE_MAX_TEXT_CHARS` — Extracted characters kept per file (default: 5000000)
+- `TROVE_MAX_TEXT_CHARS` — Extracted characters kept per file, always finite (default: 5000000)
 
 ## Tools (10)
 

@@ -195,13 +195,22 @@ def _store_one(extraction: dict[str, Any]) -> dict[str, str | int]:
         return {"path": path_str, "status": "indexed", "chunk_count": 0}
 
     # Embed in sub-batches so a large file's vectors are never all held as
-    # Python float lists at once (RT #1542).
-    for start in range(0, len(chunks), EMBED_BATCH_SIZE):
-        batch = chunks[start : start + EMBED_BATCH_SIZE]
-        embeddings = embed_texts(batch)
-        for offset, (chunk_content, embedding) in enumerate(zip(batch, embeddings, strict=True)):
-            chunk_id = db.insert_chunk(file_id, start + offset, chunk_content)
-            db.insert_vector(chunk_id, embedding)
+    # Python float lists at once (RT #1542). Batches are stored as they go,
+    # so a failure part way removes the file record and its stored chunks:
+    # a half-indexed file would otherwise match its checksum and be skipped
+    # as unchanged on every later run.
+    try:
+        for start in range(0, len(chunks), EMBED_BATCH_SIZE):
+            batch = chunks[start : start + EMBED_BATCH_SIZE]
+            embeddings = embed_texts(batch)
+            for offset, (chunk_content, embedding) in enumerate(
+                zip(batch, embeddings, strict=True)
+            ):
+                chunk_id = db.insert_chunk(file_id, start + offset, chunk_content)
+                db.insert_vector(chunk_id, embedding)
+    except Exception:
+        db.delete_file_data(file_id)
+        raise
 
     db.update_file(file_id, checksum, file_size, len(chunks), mtime)
     db.resolve_errors(path_str)

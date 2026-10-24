@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -56,7 +57,7 @@ class Config:
         self.pdf_max_pages: int = int(
             os.environ.get("TROVE_PDF_MAX_PAGES", str(DEFAULT_PDF_MAX_PAGES))
         )
-        self.max_text_chars: int = int(
+        self.max_text_chars: int = _parse_max_text_chars(
             os.environ.get("TROVE_MAX_TEXT_CHARS", str(DEFAULT_MAX_TEXT_CHARS))
         )
         self.vision_backend: str = os.environ.get("TROVE_VISION_BACKEND", "none").lower()
@@ -86,6 +87,23 @@ def _parse_paths(raw: str) -> list[str]:
     if not raw.strip():
         return []
     return [p.strip() for p in raw.split(os.pathsep) if p.strip()]
+
+
+def _parse_max_text_chars(raw: str) -> int:
+    """Parse the per-file text cap, which must stay finite.
+
+    The cap is what bounds one file's chunks and embeddings in memory, so a
+    non-positive value falls back to the default instead of disabling it.
+    """
+    max_chars = int(raw)
+    if max_chars > 0:
+        return max_chars
+    print(
+        f"[WARNING] TROVE_MAX_TEXT_CHARS={max_chars} is not positive. "
+        f"Using the default of {DEFAULT_MAX_TEXT_CHARS}.",
+        file=sys.stderr,
+    )
+    return DEFAULT_MAX_TEXT_CHARS
 
 
 def _parse_exclude(raw: str) -> list[str]:

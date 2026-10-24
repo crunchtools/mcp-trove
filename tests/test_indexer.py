@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import pytest
+
 from mcp_trove_crunchtools import database as db
 from mcp_trove_crunchtools import indexer as indexer_mod
 from mcp_trove_crunchtools.indexer import (
@@ -20,8 +22,6 @@ from mcp_trove_crunchtools.indexer import (
 
 if TYPE_CHECKING:
     import sqlite3
-
-    import pytest
 
 
 class TestChecksum:
@@ -146,11 +146,38 @@ class TestLargeFileBounds:
         monkeypatch.setenv("TROVE_CHUNK_SIZE", "1000")
         monkeypatch.setenv("TROVE_CHUNK_OVERLAP", "0")
         big = tmp_path / "big.txt"
-        big.write_text("x" * 10_000)
+        content = "".join(f"{n:05d}" for n in range(2000))
+        big.write_text(content)
 
         extraction = _extract_one(big, "sum", big.stat().st_size, None)
 
-        assert sum(len(c) for c in extraction["chunks"]) == 2500
+        assert "".join(extraction["chunks"]) == content[:2500]
+
+    def test_failed_embed_batch_removes_partial_file(
+        self, in_memory_db: sqlite3.Connection
+    ) -> None:
+        extraction = {
+            "path": "/data/manual.pdf",
+            "status": "extracted",
+            "file_type": "pdf",
+            "checksum": "abc",
+            "file_size": 1,
+            "mtime": 0.0,
+            "chunks": [f"chunk {i}" for i in range(5)],
+            "existing_id": None,
+        }
+        embed_results = [[[0.1] * 384] * 2, RuntimeError("embedding backend down")]
+
+        with (
+            patch.object(indexer_mod, "EMBED_BATCH_SIZE", 2),
+            patch.object(indexer_mod, "embed_texts", side_effect=embed_results),
+            pytest.raises(RuntimeError),
+        ):
+            _store_one(extraction)
+
+        assert db.query("SELECT id FROM files") == []
+        assert db.query("SELECT id FROM chunks") == []
+        assert db.query("SELECT chunk_id FROM chunks_vec") == []
 
     def test_store_embeds_in_sub_batches(self, in_memory_db: sqlite3.Connection) -> None:
         chunks = [f"chunk {i}" for i in range(5)]
