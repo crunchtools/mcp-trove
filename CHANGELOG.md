@@ -10,6 +10,16 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+### Fixed
+
+- PDF indexing failed on every file with "pymupdf4llm not installed". pymupdf4llm
+  2.0 is an empty shim (the code moved into pymupdf 2.x), and `>=0.0.17` let the
+  container resolve it with no pymupdf at all. Pinned to `<2`, the container build
+  now imports `pymupdf` and `pymupdf4llm` so a hollow dependency fails the build,
+  and a test extracts a real PDF (RT #1542).
+- Removed the Containerfile's `libstdc++` copy; the Hummingbird Python runtime
+  ships it.
+
 ## [0.8.0] - 2026-10-20
 
 ### Changed
