@@ -12,6 +12,12 @@ if TYPE_CHECKING:
 
 _model: TextEmbedding | None = None
 
+# Texts per ONNX forward pass. fastembed's default of 256 holds attention for
+# 256 full-length sequences at once, and one 864 KB HTML table OOM-killed the
+# 1.5 GB indexer (RT #1542). Embedding that file peaked at 989 MB at 32 and
+# 479 MB at 8.
+ENCODE_BATCH_SIZE = 8
+
 
 def get_model() -> TextEmbedding:
     """Get or create the singleton embedding model."""
@@ -43,7 +49,7 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
         return []
     try:
         model = get_model()
-        embeddings = list(model.embed(texts))
+        embeddings = list(model.embed(texts, batch_size=ENCODE_BATCH_SIZE))
         return [emb.tolist() for emb in embeddings]
     except Exception as exc:
         raise EmbeddingError(str(exc)) from exc
