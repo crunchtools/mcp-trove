@@ -22,8 +22,9 @@ from .config import get_config
 from .embedder import embed_texts
 from .errors import ExtractionError, IndexAbortedError, VisionDeferredError
 from .extractor import MAX_FILE_SIZE, classify, detect_file_type, extract_text
-from .filetypes import NAME_KIND, VISION_KINDS, is_media
+from .filetypes import NAME_KIND, SAMPLED_KINDS, VISION_KINDS, is_media
 from .manifest import Entry, load_manifest
+from .media import fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,10 @@ TYPE_CONCURRENCY = {
     "pptx": 2,
     "text": 2,
     "markdown": 2,
+    # Decoding a frame of 4K video holds tens of megabytes; two at a time
+    # keeps the indexer inside its memory limit.
+    "video": 2,
+    "audio": 2,
     NAME_KIND: 4,
 }
 PROGRESS_EVERY = 25  # stored files between progress updates
@@ -268,12 +273,23 @@ def _check_unchanged(
     ):
         return existing["checksum"], file_size, mtime, existing
 
-    # Slow path: compute checksum. A name-only entry is never read, so its
-    # stand-in checksum is rebuilt from the stat instead.
-    if classify(resolved, file_size) == NAME_KIND:
-        return name_checksum(file_size, mtime), file_size, mtime, existing
-    checksum = compute_checksum(resolved)
-    return checksum, file_size, mtime, existing
+    # Slow path: compute checksum.
+    kind = classify(resolved, file_size)
+    return content_checksum(resolved, kind, file_size, mtime), file_size, mtime, existing
+
+
+def content_checksum(path: Path, kind: str | None, file_size: int, mtime: float) -> str:
+    """The content key for a file, read the way its kind is read.
+
+    A name-only entry is never read, so its stand-in comes from the stat;
+    a video or audio file is fingerprinted from its ends, since hashing all
+    of it would download it; anything else gets its SHA-256.
+    """
+    if kind == NAME_KIND:
+        return name_checksum(file_size, mtime)
+    if kind in SAMPLED_KINDS:
+        return fingerprint(path)
+    return compute_checksum(path)
 
 
 def _current(existing: dict[str, Any], checksum: str, path: Path, file_size: int) -> bool:
@@ -319,11 +335,9 @@ def _extract_one(
         raise ExtractionError(
             str(resolved), f"{file_size} bytes is over the {MAX_FILE_SIZE} byte limit"
         )
-    if file_type == NAME_KIND:
-        checksum = name_checksum(file_size, stat.st_mtime)
-    elif not checksum or checksum.startswith(NAME_CHECKSUM_PREFIX):
+    if file_type == NAME_KIND or not checksum or checksum.startswith(NAME_CHECKSUM_PREFIX):
         # A file leaving its name-only entry has never been hashed.
-        checksum = compute_checksum(resolved)
+        checksum = content_checksum(resolved, file_type, file_size, stat.st_mtime)
     text = extract_text(resolved, checksum, file_type)
     config = get_config()
     if len(text) > config.max_text_chars:

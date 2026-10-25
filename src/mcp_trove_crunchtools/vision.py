@@ -14,12 +14,16 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import SecretStr
 
-from . import database
+from . import database, media
 from .config import get_config
 from .errors import ExtractionError, VisionDeferredError
+from .media import AUDIO_CLIP_SECONDS
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
+
+    from .media import MediaSample
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +46,24 @@ _VIDEO_MIMES: dict[str, str] = {
     ".avi": "video/x-msvideo",
     ".webm": "video/webm",
     ".mkv": "video/x-matroska",
+    ".m4v": "video/mp4",
+    ".mpg": "video/mpeg",
+    ".mpeg": "video/mpeg",
+    ".3gp": "video/3gpp",
+    ".wmv": "video/x-ms-wmv",
 }
+
+MEDIA_PROMPT = (
+    "These are {frames} frames sampled evenly through a {kind}{audio}. For search "
+    "indexing, describe in a few sentences: the subject, setting, people and "
+    "activities, and any visible text. From the sound, say whether it is speech "
+    "(its topic and language) or music (its genre and mood)."
+)
+AUDIO_PROMPT = (
+    "This is a {seconds}-second clip from an audio file. For search indexing, say "
+    "in a few sentences whether it is speech (its topic, language, kind of "
+    "recording) or music (its genre, instruments and mood)."
+)
 
 
 class VisionBackend(Protocol):
@@ -218,6 +239,36 @@ class OpenRouterBackend:
         )
         return self._client
 
+    def describe(self, path: Path, sample: MediaSample, kind: str) -> str:
+        """Caption sampled frames and an audio clip together, in one request."""
+        if sample.frames:
+            text = MEDIA_PROMPT.format(
+                frames=len(sample.frames),
+                kind=kind,
+                audio=", with a clip of its sound" if sample.audio else "",
+            )
+        elif sample.audio:
+            text = AUDIO_PROMPT.format(seconds=AUDIO_CLIP_SECONDS)
+        else:
+            raise ExtractionError(str(path), "no video or audio stream could be decoded")
+        self._get_client()
+        content: list[dict[str, Any]] = [{"type": "text", "text": text}]
+        content.extend(
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/jpeg;base64," + _b64(frame)},
+            }
+            for frame in sample.frames
+        )
+        if sample.audio:
+            content.append(
+                {
+                    "type": "input_audio",
+                    "input_audio": {"data": _b64(sample.audio), "format": "mp3"},
+                }
+            )
+        return self._complete(path, content)
+
     def caption(self, path: Path, file_type: str) -> str:
         size = path.stat().st_size
         if size > OPENROUTER_MAX_MEDIA_BYTES:
@@ -225,14 +276,18 @@ class OpenRouterBackend:
                 str(path),
                 f"{size} bytes exceeds the {OPENROUTER_MAX_MEDIA_BYTES} byte inline media limit",
             )
-        client = self._get_client()
+        self._get_client()  # a missing key fails before the file is read
         mime = _get_mime(path)
-        data_url = f"data:{mime};base64," + base64.b64encode(path.read_bytes()).decode("ascii")
+        data_url = f"data:{mime};base64," + _b64(path.read_bytes())
         if file_type == "video":
             media = {"type": "video_url", "video_url": {"url": data_url}}
         else:
             media = {"type": "image_url", "image_url": {"url": data_url}}
+        return self._complete(path, [{"type": "text", "text": self._prompt}, media])
 
+    def _complete(self, path: Path, content: list[dict[str, Any]]) -> str:
+        """One chat completion on a zero-retention provider, returning its text."""
+        client = self._get_client()
         models = [self._model]
         fallback = get_config().vision_fallback_model
         if fallback and fallback != self._model:
@@ -241,12 +296,7 @@ class OpenRouterBackend:
         try:
             response = client.chat.completions.create(
                 model=self._model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [{"type": "text", "text": self._prompt}, media],
-                    }
-                ],
+                messages=[{"role": "user", "content": content}],
                 max_tokens=300,
                 timeout=get_config().vision_timeout,
                 extra_body={
@@ -380,10 +430,15 @@ def caption_cached(path: Path, file_type: str, checksum: str | None) -> str:
     backend = get_backend()
     if backend is None:
         raise ExtractionError(str(path), "No vision backend configured")
+    return _cached(path, checksum, lambda: backend.caption(path, file_type))
+
+
+def _cached(path: Path, checksum: str | None, make: Callable[[], str]) -> str:
+    """The cached caption for checksum, or a new one from make(), saved at once."""
     conn = _cache_conn() if checksum else None
     if conn is None:
         _reserve_call(str(path))
-        return backend.caption(path, file_type)
+        return make()
     model = get_config().vision_model
     with _CAPTION_LOCKS[hash(checksum) % len(_CAPTION_LOCKS)]:
         # A caption from another model is not reused: changing
@@ -394,13 +449,40 @@ def caption_cached(path: Path, file_type: str, checksum: str | None) -> str:
         if row:
             return str(row[0])
         _reserve_call(str(path))
-        caption = backend.caption(path, file_type)
+        caption = make()
         conn.execute(
             "INSERT OR REPLACE INTO captions (sha256, model, caption) VALUES (?, ?, ?)",
             (checksum, model, caption),
         )
         conn.commit()
     return caption
+
+
+def describe_cached(path: Path, kind: str, checksum: str | None) -> str:
+    """Caption a video or audio file from samples, reusing any cached caption.
+
+    The cache is checked before anything is sampled. A cached caption of the
+    whole video, from before sampling, is kept: it saw more. A backend that
+    cannot take samples captions a video whole, as before, and cannot caption
+    audio.
+    """
+    backend = get_backend()
+    if backend is None:
+        raise ExtractionError(str(path), "No vision backend configured")
+    describe = getattr(backend, "describe", None)
+
+    def make() -> str:
+        if describe is not None:
+            return str(describe(path, media.sample(path), kind))
+        if kind == "video":
+            return backend.caption(path, kind)
+        raise ExtractionError(str(path), f"{get_config().vision_backend} cannot caption audio")
+
+    return _cached(path, checksum, make)
+
+
+def _b64(payload: bytes) -> str:
+    return base64.b64encode(payload).decode("ascii")
 
 
 def _get_mime(path: Path) -> str:

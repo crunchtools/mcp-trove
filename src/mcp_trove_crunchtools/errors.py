@@ -48,8 +48,8 @@ class DimensionMismatchError(TroveError):
     def __init__(self, db_dims: int, model_name: str, model_dims: int) -> None:
         super().__init__(
             f"Database vectors have {db_dims} dimensions but embedding model "
-            f"'{model_name}' produces {model_dims}. Reindex into a new database "
-            f"(set TROVE_DB to a new path) or restore the previous TROVE_EMBEDDING_MODEL."
+            f"'{model_name}' produces {model_dims}. Move the index to the new model with "
+            f"`mcp-trove-crunchtools --reembed`, or restore the previous TROVE_EMBEDDING_MODEL."
         )
 
 
@@ -60,8 +60,8 @@ class EmbeddingModelMismatchError(TroveError):
         super().__init__(
             f"Database vectors were built with embedding model '{db_model}' but "
             f"TROVE_EMBEDDING_MODEL is '{model_name}'. Vectors from two models cannot be "
-            f"searched together: restore TROVE_EMBEDDING_MODEL={db_model}, or reindex "
-            f"into a new database (set TROVE_DB to a new path)."
+            f"searched together: restore TROVE_EMBEDDING_MODEL={db_model}, or move the "
+            f"index to the new model with `mcp-trove-crunchtools --reembed`."
         )
 
 

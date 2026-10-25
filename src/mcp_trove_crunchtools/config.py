@@ -66,6 +66,14 @@ class Config:
             os.environ.get("TROVE_INDEX_TYPES", DEFAULT_INDEX_TYPES)
         )
         self.index_other: str = parse_index_other(os.environ.get("TROVE_INDEX_OTHER", "name"))
+        # Where a photo or video was taken, from its EXIF or container GPS.
+        # Opt-in: anyone who can search the index can read it. A personal
+        # index turns it on ("videos at the lake").
+        self.index_location: bool = os.environ.get("TROVE_INDEX_LOCATION", "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
         self.chunk_size: int = int(os.environ.get("TROVE_CHUNK_SIZE", str(DEFAULT_CHUNK_SIZE)))
         self.chunk_overlap: int = int(
             os.environ.get("TROVE_CHUNK_OVERLAP", str(DEFAULT_CHUNK_OVERLAP))
