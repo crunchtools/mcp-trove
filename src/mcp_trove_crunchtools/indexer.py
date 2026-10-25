@@ -56,10 +56,10 @@ TYPE_CONCURRENCY = {
     "pptx": 2,
     "text": 2,
     "markdown": 2,
-    # Decoding a frame of 4K video holds tens of megabytes; two at a time
-    # keeps the indexer inside its memory limit.
-    "video": 2,
-    "audio": 2,
+    # A 4K HEVC decoder holds about 200 MB; with images and a PDF in flight,
+    # a second one took the indexer past its 1.5 GB limit (RT #1542).
+    "video": 1,
+    "audio": 1,
     NAME_KIND: 4,
 }
 PROGRESS_EVERY = 25  # stored files between progress updates
