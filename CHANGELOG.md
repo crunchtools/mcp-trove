@@ -10,6 +10,15 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-10-25
+
+### Changed
+
+- The directory scan prunes hidden directories (`.git`, `.hg`, ...) instead
+  of walking them and filtering the results. Over the pCloud mount every
+  listing is a network call, and one Mercurial store stalled a run (RT #1542).
+- Supported type and exclude patterns are checked before a file is stat'ed.
+
 ## [0.9.3] - 2026-10-24
 
 ### Changed

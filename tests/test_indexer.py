@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -23,6 +24,7 @@ from mcp_trove_crunchtools.indexer import (
 
 if TYPE_CHECKING:
     import sqlite3
+    from collections.abc import Iterator
 
 
 class TestChecksum:
@@ -110,6 +112,40 @@ class TestScanDirectory:
             files = scan_directory(Path(tmpdir))
             assert len(files) == 1
             assert files[0].name == "visible.txt"
+
+    def test_scan_does_not_descend_into_hidden_dirs(self, tmp_path: Path) -> None:
+        """Hidden trees such as .hg are pruned, not walked and filtered."""
+        (tmp_path / "visible.txt").write_text("content")
+        store = tmp_path / "repo" / ".hg" / "store"
+        store.mkdir(parents=True)
+        (store / "data.txt").write_text("hidden content")
+
+        walked: list[str] = []
+        real_walk = os.walk
+
+        def tracking_walk(top: Path) -> Iterator[tuple[str, list[str], list[str]]]:
+            for entry in real_walk(top):
+                walked.append(entry[0])
+                yield entry
+
+        with patch.object(indexer_mod.os, "walk", tracking_walk):
+            files = scan_directory(tmp_path)
+
+        assert files == [tmp_path / "visible.txt"]
+        assert str(tmp_path / "repo") in walked
+        assert not any(".hg" in d for d in walked)
+
+    def test_scan_skips_hidden_files(self, tmp_path: Path) -> None:
+        (tmp_path / "visible.txt").write_text("content")
+        (tmp_path / ".hidden.txt").write_text("hidden content")
+
+        assert scan_directory(tmp_path) == [tmp_path / "visible.txt"]
+
+    def test_scan_skips_broken_symlinks(self, tmp_path: Path) -> None:
+        (tmp_path / "visible.txt").write_text("content")
+        (tmp_path / "dangling.txt").symlink_to(tmp_path / "missing.txt")
+
+        assert scan_directory(tmp_path) == [tmp_path / "visible.txt"]
 
     def test_scan_skips_large_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

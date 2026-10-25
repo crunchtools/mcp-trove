@@ -9,13 +9,15 @@ import fnmatch
 import gc
 import hashlib
 import logging
+import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import database as db
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
+
 from .config import get_config
 from .embedder import embed_texts
 from .extractor import detect_file_type, extract_text, is_supported
@@ -76,18 +78,25 @@ def scan_directory(
     patterns = exclude_patterns or get_config().exclude_patterns
     found: list[Path] = []
 
-    for path in directory.rglob("*"):
-        if not path.is_file():
-            continue
-        if any(part.startswith(".") for part in path.parts):
-            continue
-        if path.stat().st_size > MAX_FILE_SIZE:
-            continue
-        if any(fnmatch.fnmatch(path.name, pat) for pat in patterns):
-            continue
-        if not is_supported(path):
-            continue
-        found.append(path)
+    for dirpath, dirnames, filenames in os.walk(directory):
+        # Prune hidden directories before descending: filtering them after
+        # the walk still listed every file under .git and .hg, and over the
+        # pCloud mount each listing is a network call (RT #1542).
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for name in filenames:
+            if name.startswith("."):
+                continue
+            if any(fnmatch.fnmatch(name, pat) for pat in patterns):
+                continue
+            path = Path(dirpath, name)
+            if not is_supported(path):
+                continue
+            try:
+                if not path.is_file() or path.stat().st_size > MAX_FILE_SIZE:
+                    continue
+            except OSError:
+                continue
+            found.append(path)
 
     return sorted(found)
 
