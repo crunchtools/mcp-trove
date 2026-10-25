@@ -47,14 +47,19 @@ def run_index() -> int:
     }
     started = time.monotonic()
 
-    code = _preflight(summary)
-    if code is None:
-        code = 0 if not summary["problems"] else 1
-        for dir_path in config.index_paths:
-            entry: dict[str, Any] = {"path": dir_path, "status": "ok"}
-            summary["paths"].append(entry)
-            if not _index_one(dir_path, entry):
-                code = 1
+    try:
+        code = _preflight(summary)
+        if code is None:
+            code = 0 if not summary["problems"] else 1
+            for dir_path in config.index_paths:
+                entry: dict[str, Any] = {"path": dir_path, "status": "ok"}
+                summary["paths"].append(entry)
+                if not _index_one(dir_path, entry):
+                    code = 1
+    except Exception as exc:
+        # Whatever broke, the summary still has to say so: monitoring would
+        # otherwise keep reading the previous run's result.
+        code = _report(summary, f"run failed: {exc}")
 
     summary["finished_at"] = _now()
     summary["duration_seconds"] = round(time.monotonic() - started)
@@ -65,6 +70,13 @@ def run_index() -> int:
     return code
 
 
+def _report(summary: dict[str, Any], problem: str) -> int:
+    """Record a problem that fails the run, and return the failing exit code."""
+    summary["problems"].append(problem)
+    print(problem, file=sys.stderr)
+    return 1
+
+
 def _preflight(summary: dict[str, Any]) -> int | None:
     """Check the database, back it up and probe the source.
 
@@ -72,16 +84,7 @@ def _preflight(summary: dict[str, Any]) -> int | None:
     that should fail the run without stopping it are added to the summary.
     """
     config = get_config()
-
-    def stop(problem: str) -> int:
-        summary["problems"].append(problem)
-        print(problem, file=sys.stderr)
-        return 1
-
-    try:
-        db.get_db()
-    except Exception as exc:
-        return stop(f"cannot open the index database: {exc}")
+    db.get_db()
 
     stale = db.abort_stale_runs()
     if stale:
@@ -89,12 +92,11 @@ def _preflight(summary: dict[str, Any]) -> int | None:
 
     check = db.quick_check()
     if check != "ok":
-        return stop(f"index database failed PRAGMA quick_check: {check}")
+        return _report(summary, f"index database failed PRAGMA quick_check: {check}")
 
     backup_problem = _backup(config.db_path, config.backup_dir, config.backup_keep)
     if backup_problem:
-        summary["problems"].append(backup_problem)
-        print(backup_problem, file=sys.stderr)
+        _report(summary, backup_problem)
 
     if not config.index_paths:
         print("No TROVE_PATHS configured. Nothing to index.")
@@ -103,7 +105,7 @@ def _preflight(summary: dict[str, Any]) -> int | None:
     if config.require_mount:
         mount_problem = _probe_mount(config.require_mount)
         if mount_problem:
-            return stop(mount_problem)
+            return _report(summary, mount_problem)
     return None
 
 

@@ -229,13 +229,15 @@ def get_db(db_path: str | None = None) -> sqlite3.Connection:
 def transaction() -> Iterator[None]:
     """Run the enclosed writes as one transaction, committed or rolled back whole.
 
-    Nests: only the outermost block begins and commits. A file's rows go in
-    one transaction so a process killed part way leaves nothing behind.
+    The outermost block begins and commits. A nested block is a savepoint:
+    if it fails, its own writes are undone even when the caller catches the
+    error and carries on. A file's rows go in one transaction so a process
+    killed part way leaves nothing behind.
     """
     global _tx_depth
     db = get_db()
-    if _tx_depth == 0:
-        db.execute("BEGIN IMMEDIATE")
+    savepoint = f"trove_tx_{_tx_depth}"
+    db.execute("BEGIN IMMEDIATE" if _tx_depth == 0 else f"SAVEPOINT {savepoint}")
     _tx_depth += 1
     try:
         yield
@@ -243,10 +245,15 @@ def transaction() -> Iterator[None]:
         _tx_depth -= 1
         if _tx_depth == 0:
             db.rollback()
+        else:
+            db.execute(f"ROLLBACK TO {savepoint}")
+            db.execute(f"RELEASE {savepoint}")
         raise
     _tx_depth -= 1
     if _tx_depth == 0:
         db.commit()
+    else:
+        db.execute(f"RELEASE {savepoint}")
 
 
 def _commit(db: sqlite3.Connection) -> None:

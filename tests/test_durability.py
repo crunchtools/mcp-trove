@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
+import sys
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -11,6 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
+import mcp_trove_crunchtools as trove_pkg
 from mcp_trove_crunchtools import database as db
 from mcp_trove_crunchtools import indexer as indexer_mod
 from mcp_trove_crunchtools.errors import EmbeddingModelMismatchError, IndexAbortedError
@@ -19,7 +22,6 @@ from mcp_trove_crunchtools.tools import run_index as run_index_mod
 from mcp_trove_crunchtools.tools.run_index import run_index
 
 if TYPE_CHECKING:
-    import sqlite3
     from pathlib import Path
 
 
@@ -367,3 +369,59 @@ class TestRunAsync:
         never.set()
 
         assert elapsed < 2
+
+
+class TestNestedTransaction:
+    def test_caught_inner_failure_is_still_undone(self, in_memory_db: sqlite3.Connection) -> None:
+        def inner_write_then_fail() -> None:
+            with db.transaction():
+                db.insert_file("/inner.txt", "x", "text", 1, 1.0)
+                raise RuntimeError
+
+        with db.transaction():
+            db.insert_file("/outer.txt", "x", "text", 1, 1.0)
+            with pytest.raises(RuntimeError):
+                inner_write_then_fail()
+
+        assert [r["path"] for r in db.query("SELECT path FROM files")] == ["/outer.txt"]
+
+
+class TestRunIndexAlwaysReports:
+    @pytest.fixture
+    def env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        docs = tmp_path / "docs"
+        docs.mkdir()
+        monkeypatch.setenv("TROVE_DB", str(tmp_path / "data" / "trove.db"))
+        monkeypatch.setenv("TROVE_PATHS", str(docs))
+        return tmp_path
+
+    def test_unexpected_preflight_error_still_writes_summary(self, env: Path) -> None:
+        with patch.object(db, "abort_stale_runs", side_effect=sqlite3.OperationalError("locked")):
+            assert run_index() == 1
+
+        summary = json.loads((env / "data" / "last_run.json").read_text())
+        assert summary["status"] == "failed"
+        assert "locked" in summary["problems"][0]
+
+    def test_unwritable_summary_fails_the_run(
+        self, env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        blocker = env / "not-a-dir"
+        blocker.write_text("a file where the status directory should be")
+        monkeypatch.setenv("TROVE_STATUS_FILE", str(blocker / "last_run.json"))
+
+        assert run_index() == 1
+
+
+class TestIndexEntryPoint:
+    def test_main_exits_with_the_run_code(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """--index ends in os._exit(code) so a stuck worker thread cannot hold it open."""
+        monkeypatch.setattr(sys, "argv", ["mcp-trove-crunchtools", "--index"])
+        with (
+            patch.object(run_index_mod, "run_index", return_value=1),
+            patch.object(trove_pkg.os, "_exit", side_effect=SystemExit) as exit_,
+            pytest.raises(SystemExit),
+        ):
+            trove_pkg.main()
+
+        exit_.assert_called_once_with(1)
