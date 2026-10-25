@@ -170,6 +170,36 @@ class TestManifestPartition:
 
         assert [r["status"] for r in results] == ["removed"] * 5
 
+    @pytest.mark.parametrize("inbox", [True, False])
+    async def test_big_inbox_may_empty_out(
+        self,
+        tmp_path: Path,
+        manifests: Path,
+        in_memory_db: sqlite3.Connection,
+        inbox: bool,
+    ) -> None:
+        """Autosync/Queued held 103 photos one night and none the next (RT #1542)."""
+        if inbox:
+            indexer_mod.get_config().inbox_paths = ["/elsewhere", str(tmp_path)]
+        for n in range(103):
+            db.insert_file(str(tmp_path / f"staged{n}.jpg"), "sum", "image", 10, MTIME)
+        db.finish_run(
+            db.start_run(str(tmp_path), 103),
+            files_indexed=103,
+            files_skipped=0,
+            files_errored=0,
+            total_chunks=103,
+        )
+        _write_manifest(tmp_path, [])
+
+        if inbox:
+            results = await index_path_async(tmp_path)
+            assert [r["status"] for r in results] == ["removed"] * 103
+        else:
+            with pytest.raises(IndexAbortedError, match="under 50%"):
+                await index_path_async(tmp_path)
+            assert len(db.query("SELECT id FROM files")) == 103
+
     @pytest.mark.parametrize("sizes", [(100, 90), (99, 0)])
     async def test_removal_guard_boundaries(
         self,
@@ -334,6 +364,34 @@ class TestStreaming:
             await index_path_async(tmp_path)
 
         assert peak == 1
+
+    async def test_slow_embedding_does_not_time_out_reads_in_flight(
+        self, tmp_path: Path, in_memory_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Embedding on the event loop stalled it; in-flight reads then timed out."""
+        monkeypatch.setattr(indexer_mod.get_config(), "vision_timeout", 0.1)
+        (tmp_path / "a_big.txt").write_text("BIG " * 50)
+        for n in range(3):
+            (tmp_path / f"small{n}.txt").write_text("small")
+        real_extract = indexer_mod._extract_one
+
+        def extract(path: Path, *args: Any) -> dict[str, Any]:
+            if "small" in path.name:
+                time.sleep(0.1)
+            return real_extract(path, *args)
+
+        def embed(texts: list[str]) -> list[list[float]]:
+            if any("BIG" in t for t in texts):
+                time.sleep(1)
+            return [[0.0] * 384 for _ in texts]
+
+        with (
+            patch.object(indexer_mod, "_extract_one", extract),
+            patch.object(indexer_mod, "embed_texts", side_effect=embed),
+        ):
+            results = await index_path_async(tmp_path)
+
+        assert [r["status"] for r in results] == ["indexed"] * 4
 
 
 class TestCacheDatabase:

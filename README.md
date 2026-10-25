@@ -70,6 +70,7 @@ claude mcp add mcp-trove-crunchtools -- uvx mcp-trove-crunchtools
 |----------|---------|-------------|
 | `TROVE_DB` | `~/.local/share/mcp-trove/trove.db` | SQLite database path |
 | `TROVE_PATHS` | (none) | Directories to index in background mode, separated by `:` (`;` on Windows) |
+| `TROVE_INBOX_PATHS` | (none) | Index paths that empty out by design (an upload inbox), separated like `TROVE_PATHS`; the shrink and removal guards skip them |
 | `TROVE_INDEX_WORKERS` | `20` | Images and videos extracted at once. PDFs run one at a time and text files two, whatever this is set to |
 | `TROVE_INDEX_BATCH` | `50` | Unused since 0.12.0, when files began streaming through extraction instead of in batches; still accepted |
 | `TROVE_MANIFEST_DIR` | (none) | Directory of per-path file listings the host writes before a run (see Background Indexing); unset, each run walks its trees |

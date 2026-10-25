@@ -10,6 +10,23 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-25
+
+### Added
+
+- `TROVE_INBOX_PATHS`: index paths that empty out by design, such as a
+  phone's upload folder whose photos are filed elsewhere. The shrink gate and
+  the manifest removal guard are not applied to them, so an emptied inbox has
+  its entries removed instead of aborting the run as a dead mount (RT #1542).
+
+### Fixed
+
+- Embedding ran on the event loop, so a file with hundreds of chunks stalled
+  it for minutes, and the timeouts of extractions still in flight fired on
+  reads that had long finished. Five of them aborted the run as a hung
+  source. Embedding now runs on a worker thread; the database writes stay on
+  the loop's thread (RT #1542).
+
 ## [0.12.0] - 2026-10-25
 
 ### Added
