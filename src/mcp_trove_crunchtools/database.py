@@ -18,6 +18,7 @@ from . import __version__
 from .config import get_config
 from .embedder import get_vector_dims
 from .errors import DimensionMismatchError, EmbeddingModelMismatchError
+from .filetypes import AUDIO_EXTENSIONS, VIDEO_EXTENSIONS
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -127,13 +128,18 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(
 """
 
 
+def create_vec_table(conn: sqlite3.Connection, dims: int) -> None:
+    """Create chunks_vec for vectors of dims dimensions (an int, never user text)."""
+    conn.execute(VEC_TABLE_SQL.format(dims=int(dims)))
+
+
 def _ensure_vec_table(conn: sqlite3.Connection) -> None:
     """Create chunks_vec for the configured model, or verify an existing one matches."""
     model_name = get_config().embedding_model
     model_dims = get_vector_dims(model_name)
     row = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'chunks_vec'").fetchone()
     if row is None:
-        conn.execute(VEC_TABLE_SQL.format(dims=model_dims))
+        create_vec_table(conn, model_dims)
         return
     match = re.search(r"float\[(\d+)\]", row[0])
     if match and int(match.group(1)) != model_dims:
@@ -207,9 +213,26 @@ def _add_error_versions(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE index_errors ADD COLUMN mtime REAL")
 
 
+def _retry_media_failures(conn: sqlite3.Connection) -> None:
+    """Migration 3: let videos and audio that failed before sampling be tried again.
+
+    Up to 0.15 a video was sent whole, and any over 20 MB failed for good;
+    known_failures() would skip them forever. 0.16 samples them instead.
+    """
+    suffixes = sorted(VIDEO_EXTENSIONS | AUDIO_EXTENSIONS)
+    conditions = " OR ".join("lower(path) LIKE ?" for _ in suffixes)
+    cursor = conn.execute(
+        "UPDATE index_errors SET resolved = 1, resolved_at = datetime('now') "
+        f"WHERE resolved = 0 AND ({conditions})",
+        [f"%{suffix}" for suffix in suffixes],
+    )
+    if cursor.rowcount:
+        logger.warning("Cleared %d video and audio failures for a retry", cursor.rowcount)
+
+
 # Applied in order; PRAGMA user_version records how many have run. Append
 # new steps, never reorder or remove one.
-MIGRATIONS = (_repair_partial_files, _add_error_versions)
+MIGRATIONS = (_repair_partial_files, _add_error_versions, _retry_media_failures)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 
@@ -414,73 +437,109 @@ def insert_vector(chunk_id: int, embedding: list[float] | bytes) -> None:
     _commit(db)
 
 
+# sqlite-vec's nearest-neighbour search runs before any other condition, so
+# a search scoped to a folder asks for this many neighbours and filters them.
+SCOPED_KNN = 4096
+_HIT_COLUMNS = "c.id AS chunk_id, c.content, c.metadata, c.chunk_index, f.path, f.file_type"
+
+
+def path_prefix_range(prefix: str) -> tuple[str, str]:
+    """Bounds that select every path starting with prefix, served by the path index.
+
+    A range instead of LIKE, whose _ and % in a folder name would match any
+    character.
+    """
+    return prefix, prefix[:-1] + chr(ord(prefix[-1]) + 1)
+
+
 def search_vectors(
     query_embedding: list[float], limit: int, path_filter: str | None = None
 ) -> list[dict[str, Any]]:
-    """Search for similar chunks using vector similarity."""
+    """The limit chunks nearest the query, optionally under a path prefix."""
     serialized = sqlite_vec.serialize_float32(query_embedding)
-    if path_filter:
+    if not path_filter:
         return query(
-            """
-            SELECT
-                cv.chunk_id,
-                cv.distance,
-                c.content,
-                c.metadata,
-                c.chunk_index,
-                f.path,
-                f.file_type
+            f"""
+            SELECT {_HIT_COLUMNS}, cv.distance
             FROM chunks_vec cv
             JOIN chunks c ON c.id = cv.chunk_id
             JOIN files f ON f.id = c.file_id
-            WHERE cv.embedding MATCH ?
-              AND k = ?
-              AND f.path LIKE ?
+            WHERE cv.embedding MATCH ? AND k = ?
             ORDER BY cv.distance
             """,
-            (serialized, limit * 3, path_filter + "%"),
+            (serialized, limit),
         )
-    return query(
-        """
-        SELECT
-            cv.chunk_id,
-            cv.distance,
-            c.content,
-            c.metadata,
-            c.chunk_index,
-            f.path,
-            f.file_type
+    low, high = path_prefix_range(path_filter)
+    nearest = query(
+        f"""
+        SELECT {_HIT_COLUMNS}, cv.distance
         FROM chunks_vec cv
         JOIN chunks c ON c.id = cv.chunk_id
         JOIN files f ON f.id = c.file_id
-        WHERE cv.embedding MATCH ?
-          AND k = ?
+        WHERE cv.embedding MATCH ? AND k = ? AND f.path >= ? AND f.path < ?
         ORDER BY cv.distance
+        LIMIT ?
         """,
-        (serialized, limit * 3),
+        (serialized, SCOPED_KNN, low, high, limit),
+    )
+    if len(nearest) >= limit:
+        return nearest
+    # The scope's chunks are not all among the SCOPED_KNN nearest overall, so
+    # measure every chunk in the scope instead: exact, and the scope is small
+    # whenever this is reached.
+    return query(
+        f"""
+        SELECT {_HIT_COLUMNS}, vec_distance_l2(cv.embedding, ?) AS distance
+        FROM files f
+        JOIN chunks c ON c.file_id = f.id
+        JOIN chunks_vec cv ON cv.chunk_id = c.id
+        WHERE f.path >= ? AND f.path < ?
+        ORDER BY distance
+        LIMIT ?
+        """,
+        (serialized, low, high, limit),
     )
 
 
-def search_fts(query_text: str, limit: int) -> list[dict[str, Any]]:
-    """Search chunks using FTS5 full-text search."""
+def search_fts(match: str, limit: int, path_filter: str | None = None) -> list[dict[str, Any]]:
+    """The limit best keyword matches (bm25) for an FTS5 MATCH expression."""
+    low, high = path_prefix_range(path_filter) if path_filter else ("", "\U0010ffff")
     return query(
-        """
-        SELECT
-            c.id AS chunk_id,
-            rank AS score,
-            c.content,
-            c.metadata,
-            c.chunk_index,
-            f.path,
-            f.file_type
+        f"""
+        SELECT {_HIT_COLUMNS}, fts.rank AS score
         FROM chunks_fts fts
         JOIN chunks c ON c.id = fts.rowid
         JOIN files f ON f.id = c.file_id
-        WHERE chunks_fts MATCH ?
-        ORDER BY rank
+        WHERE chunks_fts MATCH ? AND f.path >= ? AND f.path < ?
+        ORDER BY fts.rank
         LIMIT ?
         """,
-        (query_text, limit),
+        (match, low, high, limit),
+    )
+
+
+def search_paths(
+    terms: list[str], limit: int, path_filter: str | None = None
+) -> list[dict[str, Any]]:
+    """Files whose path holds every term, shortest path first, with their first chunk.
+
+    Folder and file names carry much of what a file is about ("2008 Jeep
+    Grand Cherokee/Maintenance"), and a PDF's text may never say it.
+    """
+    if not terms:
+        return []
+    low, high = path_prefix_range(path_filter) if path_filter else ("", "\U0010ffff")
+    conditions = " AND ".join("instr(lower(f.path), ?) > 0" for _ in terms)
+    return query(
+        f"""
+        SELECT {_HIT_COLUMNS}
+        FROM files f
+        JOIN chunks c ON c.file_id = f.id AND c.chunk_index = 0
+        WHERE f.path >= ? AND f.path < ? AND {conditions}
+        ORDER BY length(f.path)
+        LIMIT ?
+        """,
+        (low, high, *terms, limit),
     )
 
 

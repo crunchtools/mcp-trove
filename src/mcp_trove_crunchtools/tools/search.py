@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 import struct
 from typing import Any
@@ -18,76 +19,95 @@ from ..models import SearchParams, SimilarParams
 logger = logging.getLogger(__name__)
 
 
+# Reciprocal rank fusion: each ranked list gives a hit 1/(RRF_K + rank). It
+# needs no score calibration between bm25, vector distance and path matches,
+# and a hit near the top of any one list ranks well.
+RRF_K = 60
+# A path holding every query term is a precise match, so it counts double.
+SOURCE_WEIGHTS = {"vector": 1.0, "fts": 1.0, "path": 2.0}
+CANDIDATES_PER_RESULT = 5  # hits fetched from each list per result returned
+# When one file's chunks fill the candidates, the pool widens up to this.
+MAX_CANDIDATES = 2000
+_TERM = re.compile(r"\w{2,}")
+
+
 async def trove_search(
     query: str,
     path: str | None = None,
     limit: int = 10,
 ) -> list[dict[str, Any]]:
-    """Hybrid semantic + FTS5 search over indexed content.
+    """Hybrid search: vector similarity, keywords and file paths, fused by rank.
 
-    Combines vector similarity and keyword matching, deduplicates,
-    and returns ranked results with file paths and context.
+    One result per file, its best-matching chunk, with matches counting how
+    many of the file's chunks were hits. A file whose text says little (a
+    receipt scan, a short caption) can still rank on its folder and name.
     """
     try:
         params = SearchParams(query=query, path=path, limit=limit)
     except ValidationError as exc:
         raise InvalidInputError(str(exc)) from exc
     query, path, limit = params.query, params.path, params.limit
+    terms = list(dict.fromkeys(_TERM.findall(query.lower())))
+    embedding = embed_query(query)
+    wanted = limit * CANDIDATES_PER_RESULT
+    while True:
+        ranked = {
+            "vector": db.search_vectors(embedding, wanted, path_filter=path),
+            "fts": _keyword_hits(terms, wanted, path),
+            "path": db.search_paths(terms, wanted, path_filter=path),
+        }
+        fused = _fuse(ranked)
+        # A list that came back full may hold more files past its cut.
+        more = any(len(hits) >= wanted for hits in ranked.values())
+        if len(fused) >= limit or not more or wanted >= MAX_CANDIDATES:
+            return fused[:limit]
+        wanted = min(wanted * 4, MAX_CANDIDATES)
 
-    query_embedding = embed_query(query)
-    vec_results = db.search_vectors(query_embedding, limit, path_filter=path)
 
+def _keyword_hits(terms: list[str], limit: int, path: str | None) -> list[dict[str, Any]]:
+    """bm25 hits for any of the terms, each quoted so no character is FTS5 syntax."""
+    if not terms:
+        return []
+    match = " OR ".join(f'"{term}"' for term in terms)
     try:
-        fts_results = db.search_fts(query, limit)
+        return db.search_fts(match, limit, path_filter=path)
     except sqlite3.OperationalError as exc:
-        # FTS5 MATCH syntax is strict about quotes/operators/punctuation, and raw
-        # user queries commonly contain characters that trip it (e.g. "don't",
-        # "c++"). Vector results still cover the query, so fall back to those
-        # alone rather than failing the whole search -- but log it, since a
-        # corrupt FTS5 index would raise the same error and should be visible.
-        logger.warning("FTS5 query failed, falling back to vector-only results: %s", exc)
-        fts_results = []
+        # Quoted terms cannot be malformed, so this is the index itself:
+        # carry on with the other lists, but say so.
+        logger.warning("FTS5 query failed, searching without keywords: %s", exc)
+        return []
 
-    seen_chunk_ids: set[int] = set()
-    merged: list[dict[str, Any]] = []
 
-    for row in vec_results:
-        chunk_id = row["chunk_id"]
-        if chunk_id in seen_chunk_ids:
-            continue
-        seen_chunk_ids.add(chunk_id)
-        merged.append(
-            {
-                "chunk_id": chunk_id,
-                "path": row["path"],
-                "file_type": row["file_type"],
-                "chunk_index": row["chunk_index"],
-                "content": row["content"],
-                "metadata": json.loads(row["metadata"]) if row["metadata"] else None,
-                "vector_distance": row["distance"],
-                "source": "vector",
-            }
-        )
-
-    for row in fts_results:
-        chunk_id = row["chunk_id"]
-        if chunk_id in seen_chunk_ids:
-            continue
-        seen_chunk_ids.add(chunk_id)
-        merged.append(
-            {
-                "chunk_id": chunk_id,
-                "path": row["path"],
-                "file_type": row["file_type"],
-                "chunk_index": row["chunk_index"],
-                "content": row["content"],
-                "metadata": json.loads(row["metadata"]) if row["metadata"] else None,
-                "fts_score": row["score"],
-                "source": "fts",
-            }
-        )
-
-    return merged[:limit]
+def _fuse(ranked: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Merge ranked hit lists by reciprocal rank, keeping each file's best chunk."""
+    chunks: dict[int, dict[str, Any]] = {}
+    for source, hits in ranked.items():
+        for rank, hit in enumerate(hits, start=1):
+            entry = chunks.setdefault(
+                hit["chunk_id"],
+                {
+                    "chunk_id": hit["chunk_id"],
+                    "path": hit["path"],
+                    "file_type": hit["file_type"],
+                    "chunk_index": hit["chunk_index"],
+                    "content": hit["content"],
+                    "metadata": json.loads(hit["metadata"]) if hit["metadata"] else None,
+                    "score": 0.0,
+                    "sources": [],
+                },
+            )
+            entry["score"] += SOURCE_WEIGHTS[source] / (RRF_K + rank)
+            entry["sources"].append(source)
+    files: dict[str, dict[str, Any]] = {}
+    for entry in sorted(chunks.values(), key=lambda e: e["score"], reverse=True):
+        best = files.get(entry["path"])
+        if best is None:
+            files[entry["path"]] = {**entry, "matches": 1}
+        else:
+            best["matches"] += 1
+    for entry in files.values():
+        entry["score"] = round(entry["score"], 6)
+    return list(files.values())
 
 
 async def trove_similar(

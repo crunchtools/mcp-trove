@@ -10,11 +10,15 @@ from __future__ import annotations
 IMAGE_EXTENSIONS = frozenset(
     {".jpg", ".jpeg", ".png", ".gif", ".heic", ".heif", ".webp", ".bmp", ".tiff", ".tif"}
 )
-VIDEO_EXTENSIONS = frozenset({".mp4", ".mov", ".avi", ".webm", ".mkv"})
+VIDEO_EXTENSIONS = frozenset(
+    {".mp4", ".mov", ".avi", ".webm", ".mkv", ".m4v", ".mpg", ".mpeg", ".3gp", ".wmv"}
+)
+AUDIO_EXTENSIONS = frozenset({".mp3", ".m4a", ".wav", ".flac", ".ogg", ".aac", ".wma", ".opus"})
 
 CATEGORIES: dict[str, frozenset[str]] = {
     "images": IMAGE_EXTENSIONS,
     "videos": VIDEO_EXTENSIONS,
+    "audio": AUDIO_EXTENSIONS,
     "pdf": frozenset({".pdf"}),
     "text": frozenset({".txt", ".md", ".markdown", ".rst", ".org", ".tex"}),
     "documents": frozenset({".docx", ".doc", ".odt", ".rtf"}),
@@ -51,7 +55,7 @@ CATEGORIES: dict[str, frozenset[str]] = {
     ),
 }
 
-DEFAULT_INDEX_TYPES = "images,videos,pdf,text,documents,spreadsheets,presentations"
+DEFAULT_INDEX_TYPES = "images,videos,audio,pdf,text,documents,spreadsheets,presentations"
 INDEX_OTHER_MODES = frozenset({"skip", "name"})
 
 # The extractor for each extension; any other categorised extension is read
@@ -73,9 +77,13 @@ KINDS: dict[str, str] = {
     ".markdown": "markdown",
     **dict.fromkeys(IMAGE_EXTENSIONS, "image"),
     **dict.fromkeys(VIDEO_EXTENSIONS, "video"),
+    **dict.fromkeys(AUDIO_EXTENSIONS, "audio"),
 }
 
-VISION_KINDS = frozenset({"image", "video"})
+VISION_KINDS = frozenset({"image", "video", "audio"})
+# Sampled rather than read whole, so no size limit applies and the content
+# key is a fingerprint, not a hash of every byte.
+SAMPLED_KINDS = frozenset({"video", "audio"})
 NAME_KIND = "name"
 
 
@@ -88,8 +96,8 @@ def category_of(suffix: str) -> str | None:
 
 
 def is_media(suffix: str) -> bool:
-    """Images and videos: their captions cost money, so they are never purged by policy."""
-    return suffix in IMAGE_EXTENSIONS or suffix in VIDEO_EXTENSIONS
+    """Images, video and audio: captions cost money, so they are never purged by policy."""
+    return suffix in IMAGE_EXTENSIONS or suffix in VIDEO_EXTENSIONS or suffix in AUDIO_EXTENSIONS
 
 
 def parse_index_types(raw: str) -> frozenset[str]:

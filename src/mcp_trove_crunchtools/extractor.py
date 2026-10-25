@@ -13,7 +13,7 @@ from typing import Any
 from .config import get_config
 from .documents import DOCUMENT_EXTRACTORS
 from .errors import ExtractionError, UnsupportedFileTypeError
-from .filetypes import KINDS, NAME_KIND, VISION_KINDS, category_of
+from .filetypes import KINDS, NAME_KIND, SAMPLED_KINDS, VISION_KINDS, category_of
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ def classify(path: Path, size: int | None = None) -> str | None:
         kind = KINDS.get(suffix, "text")
         if kind in VISION_KINDS and get_backend() is None:
             return None
-        if size is None or size <= MAX_FILE_SIZE:
+        if size is None or size <= MAX_FILE_SIZE or kind in SAMPLED_KINDS:
             return kind
     return NAME_KIND if config.index_other == "name" else None
 
@@ -82,8 +82,8 @@ def extract_text(path: Path, checksum: str | None = None, file_type: str | None 
         return _extract_pdf(path, checksum)
     if file_type == "image":
         return _extract_image(path, checksum)
-    if file_type == "video":
-        return _extract_video(path, checksum)
+    if file_type in SAMPLED_KINDS:
+        return _extract_sampled(path, file_type, checksum)
     if file_type == NAME_KIND:
         return name_entry(path)
     if file_type in DOCUMENT_EXTRACTORS:
@@ -301,7 +301,7 @@ def _format_exif(exif_data: Any, gpstags: dict[int, str]) -> str:
             camera = camera_model
         fields.append(f"Camera: {camera}")
 
-    gps_ifd = exif_data.get_ifd(0x8825)
+    gps_ifd = exif_data.get_ifd(0x8825) if get_config().index_location else None
     if gps_ifd:
         coords = _format_gps(gps_ifd, gpstags)
         if coords:
@@ -371,9 +371,15 @@ def _extract_image(path: Path, checksum: str | None = None) -> str:
     return "\n".join(parts)
 
 
-def _extract_video(path: Path, checksum: str | None = None) -> str:
-    """Extract text from a video via vision backend."""
-    from .vision import caption_cached
+def _extract_sampled(path: Path, file_type: str, checksum: str | None = None) -> str:
+    """A video or audio file: its metadata, and a caption of sampled frames and sound."""
+    from . import media
+    from .vision import describe_cached
 
-    caption = caption_cached(path, "video", checksum)
-    return f"[File] {path.name}\n[Caption] {caption}"
+    probe = media.probe(path)
+    parts = [f"[File] {path.name}"]
+    if details := probe.describe():
+        parts.append(f"[{file_type.title()}] {details}")
+    caption = describe_cached(path, file_type, checksum)
+    parts.append(f"[Caption] {caption}")
+    return "\n".join(parts)

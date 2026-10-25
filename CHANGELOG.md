@@ -10,6 +10,46 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-25
+
+### Added
+
+- Video and audio are captioned from samples instead of being sent whole:
+  10 frames spread from 5% to 95% of a video, taken from the nearest
+  keyframes, and a 20-second mono MP3 clip from a quarter of the way in, all
+  in one OpenRouter request (images plus `input_audio`). Any length of file
+  costs one call and a few ranged reads. Duration, recording time, phone GPS
+  and audio tags are indexed alongside the caption. Videos over 20 MB, which
+  always failed before, are retried once (migration 3).
+- An `audio` category (mp3, m4a, wav, flac, ogg, aac, wma, opus), on by
+  default, and more video extensions (m4v, mpg, mpeg, 3gp, wmv).
+- `TROVE_INDEX_LOCATION` (default `true`): set `false` to leave the GPS of
+  photos and videos out of the index.
+- `--reembed`: rebuilds every vector from the stored chunks under
+  `TROVE_EMBEDDING_MODEL`, resumable, with an atomic swap; nothing is
+  re-extracted or re-captioned.
+- `--eval QUERIES_JSON`: recall@5 and MRR for a list of real queries and the
+  path fragments a right answer contains.
+
+### Changed
+
+- `trove_search` fuses three ranked lists by reciprocal rank (k=60): vector
+  similarity, bm25 keywords, and file paths that hold every query term
+  (weighted double). Before, keyword hits were appended after the vector
+  hits and dropped whenever those filled the limit. Results are one per
+  file, its best chunk, with `score`, `sources` and `matches`; the
+  `source`, `vector_distance` and `fts_score` fields are gone.
+- Video and audio files are keyed by a fingerprint of their size and first
+  and last megabyte, not a hash of every byte, so checking one does not
+  download it.
+
+### Fixed
+
+- A search scoped to a path ignored the scope for keyword hits, could
+  return nothing when the scope's chunks were not among the 30 nearest
+  overall, and treated `_` and `%` in the path as wildcards.
+- Query punctuation no longer drops keyword matching: terms are quoted.
+
 ## [0.15.0] - 2026-10-25
 
 ### Added

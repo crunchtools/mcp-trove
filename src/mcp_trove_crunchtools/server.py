@@ -25,7 +25,7 @@ READ_ONLY = {"readOnlyHint": True}
 
 mcp = FastMCP(
     "mcp-trove-crunchtools",
-    version="0.15.0",
+    version="0.16.0",
     instructions=(
         "Self-hosted local file indexing MCP server with semantic search. "
         "Index any local directory and search over contents using hybrid "
@@ -46,10 +46,12 @@ async def trove_search_tool(
     path: str | None = None,
     limit: int = 10,
 ) -> list[dict[str, Any]]:
-    """Hybrid semantic + keyword search over indexed files.
+    """Hybrid search over indexed files: meaning, keywords and folder/file names.
 
-    Combines vector similarity and FTS5 keyword matching for best results.
-    Returns ranked chunks with file paths, scores, and content.
+    Vector similarity, keyword (bm25) and path matches are fused by rank.
+    Returns one result per file, its best-matching chunk, with path,
+    file_type, content, score, sources (which lists matched) and matches
+    (how many of the file's chunks were hits).
 
     Args:
         query: Search query text

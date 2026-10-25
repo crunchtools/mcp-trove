@@ -5,8 +5,9 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from pathlib import Path
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"
 
 
 def main() -> None:
@@ -38,7 +39,24 @@ def main() -> None:
         help="Index TROVE_PATHS directories and exit (for systemd timer)",
     )
 
+    parser.add_argument(
+        "--reembed",
+        action="store_true",
+        help="Rebuild every vector under TROVE_EMBEDDING_MODEL from the stored chunks and exit",
+    )
+    parser.add_argument(
+        "--eval",
+        metavar="QUERIES_JSON",
+        help="Score search on a JSON list of {query, expect} cases and exit",
+    )
+
     args = parser.parse_args()
+
+    if args.reembed or args.eval:
+        from .tools.maintenance import evaluate, print_json, reembed
+
+        print_json(reembed() if args.reembed else evaluate(Path(args.eval)))
+        return
 
     if args.index:
         from .tools.run_index import run_index
