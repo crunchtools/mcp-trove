@@ -57,6 +57,14 @@ class Config:
         self.exclude_patterns: list[str] = _parse_exclude(
             os.environ.get("TROVE_EXCLUDE_PATTERNS", DEFAULT_EXCLUDE_PATTERNS)
         )
+        # Source code, configuration and logs are skipped unless asked for:
+        # they are not documents, they are slow to embed, and a .env or .conf
+        # can hold secrets.
+        self.index_source_code: bool = os.environ.get("TROVE_INDEX_SOURCE_CODE", "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
         self.chunk_size: int = int(os.environ.get("TROVE_CHUNK_SIZE", str(DEFAULT_CHUNK_SIZE)))
         self.chunk_overlap: int = int(
             os.environ.get("TROVE_CHUNK_OVERLAP", str(DEFAULT_CHUNK_OVERLAP))

@@ -162,8 +162,8 @@ class TestShrinkGate:
     """A tree that suddenly lost most of its files is treated as a broken source."""
 
     def _previous_run(self, directory: Path, files_found: int) -> None:
-        run = db.start_run(str(directory.resolve()), files_found)
-        db.finish_run(run, files_indexed=0, files_skipped=0, files_errored=0, total_chunks=0)
+        for n in range(files_found):
+            db.insert_file(str(directory.resolve() / f"gone{n}.txt"), "sum", "text", 1, 1.0)
 
     async def test_shrunken_tree_aborts(
         self, tmp_path: Path, in_memory_db: sqlite3.Connection

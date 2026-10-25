@@ -305,6 +305,66 @@ class TestManifestPartition:
         assert len(db.query("SELECT id FROM files")) == 100
 
 
+class TestExclusion:
+    """Source code and excluded directories are skipped, and purged once indexed."""
+
+    def test_excluded_directory_is_not_walked(
+        self, tmp_path: Path, in_memory_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(indexer_mod.get_config(), "exclude_patterns", ["Old Backup"])
+        (tmp_path / "Old Backup" / "docs").mkdir(parents=True)
+        (tmp_path / "Old Backup" / "docs" / "readme.txt").write_text("old")
+        (tmp_path / "notes.txt").write_text("keep")
+
+        assert scan_source(tmp_path)[0] == [tmp_path / "notes.txt"]
+
+    def test_excluded_directory_is_dropped_from_the_manifest(
+        self, tmp_path: Path, manifests: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(indexer_mod.get_config(), "exclude_patterns", ["Old Backup"])
+        _write_manifest(tmp_path, [_entry("Old Backup/docs/readme.txt"), _entry("notes.txt")])
+
+        assert scan_source(tmp_path)[0] == [tmp_path / "notes.txt"]
+
+    async def test_indexed_code_and_excluded_trees_are_purged(
+        self, tmp_path: Path, in_memory_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The purge does not trip the shrink gate, whose baseline is the index."""
+        monkeypatch.setattr(indexer_mod.get_config(), "exclude_patterns", ["Old Backup"])
+        for n in range(150):
+            db.insert_file(str(tmp_path / "src" / f"f{n}.c"), "sum", "text", 1, MTIME)
+        db.insert_file(str(tmp_path / "Old Backup" / "notes.txt"), "sum", "text", 1, MTIME)
+        db.insert_file(str(tmp_path / "photo.jpg"), "sum", "image", 1, MTIME)
+        (tmp_path / "letter.txt").write_text("a letter")
+
+        results = await index_path_async(tmp_path)
+
+        assert sum(r.get("reason") == "excluded" for r in results) == 151
+        remaining = {Path(r["path"]).name for r in db.query("SELECT path FROM files")}
+        assert remaining == {"photo.jpg", "letter.txt"}
+
+    async def test_purge_reported_when_nothing_is_left(
+        self, tmp_path: Path, in_memory_db: sqlite3.Connection
+    ) -> None:
+        db.insert_file(str(tmp_path / "main.c"), "sum", "text", 1, MTIME)
+        db.insert_file(str(tmp_path / ".env"), "sum", "text", 1, MTIME)
+
+        results = await index_path_async(tmp_path)
+
+        assert sorted(Path(str(r["path"])).name for r in results) == [".env", "main.c"]
+        assert db.query("SELECT path FROM files") == []
+
+    async def test_code_kept_when_asked_for(
+        self, tmp_path: Path, in_memory_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(indexer_mod.get_config(), "index_source_code", True)
+        (tmp_path / "tool.py").write_text("print('hi')")
+
+        results = await index_path_async(tmp_path)
+
+        assert [r["status"] for r in results] == ["indexed"]
+
+
 class TestStreaming:
     async def test_slow_file_does_not_hold_back_the_rest(
         self, tmp_path: Path, in_memory_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch

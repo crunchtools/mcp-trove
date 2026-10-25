@@ -21,7 +21,7 @@ from . import vision
 from .config import get_config
 from .embedder import embed_texts
 from .errors import ExtractionError, IndexAbortedError, VisionDeferredError
-from .extractor import detect_file_type, extract_text, is_supported
+from .extractor import detect_file_type, extract_text, is_source_code, is_supported
 from .manifest import Entry, load_manifest
 
 logger = logging.getLogger(__name__)
@@ -107,7 +107,11 @@ def scan_directory(
         # Prune hidden directories before descending: filtering them after
         # the walk still listed every file under .git and .hg, and over the
         # pCloud mount each listing is a network call (RT #1542).
-        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if not d.startswith(".") and not any(fnmatch.fnmatch(d, pat) for pat in patterns)
+        ]
         for name in filenames:
             if name.startswith("."):
                 continue
@@ -150,9 +154,48 @@ def _wanted(relative: Path, size: int, patterns: list[str]) -> bool:
         return False
     if size > MAX_FILE_SIZE:
         return False
-    if any(fnmatch.fnmatch(relative.name, pat) for pat in patterns):
+    if _excluded(relative, patterns):
         return False
     return is_supported(relative)
+
+
+def _excluded(relative: Path, patterns: list[str]) -> bool:
+    """Whether a pattern matches the file's name or a directory above it."""
+    return any(fnmatch.fnmatch(part, pat) for part in relative.parts for pat in patterns)
+
+
+def _remove_excluded(directory: Path) -> list[dict[str, str | int]]:
+    """Drop index entries under directory that the configuration now excludes.
+
+    Only explicit policy counts: TROVE_EXCLUDE_PATTERNS, and source code while
+    TROVE_INDEX_SOURCE_CODE is off. Images are never dropped here, so a vision
+    backend left unset does not throw away paid-for captions.
+    """
+    config = get_config()
+    gone = [
+        row
+        for row in _rows_under(directory)
+        if _excluded(Path(row["path"]).relative_to(directory), config.exclude_patterns)
+        or (not config.index_source_code and is_source_code(Path(row["path"])))
+    ]
+    for row in gone:
+        db.delete_file_data(row["id"])
+    return [
+        {"path": row["path"], "status": "removed", "reason": "excluded", "chunk_count": 0}
+        for row in gone
+    ]
+
+
+def _rows_under(directory: Path) -> list[dict[str, Any]]:
+    """The id and path of every index entry under directory."""
+    # A range on path, so the files index serves it: every path that starts
+    # with the prefix sorts at or after it and before the prefix with its "/"
+    # replaced by "0", the next character. The root's prefix is just "/".
+    prefix = f"{str(directory).rstrip('/')}/"
+    return db.query(
+        "SELECT id, path FROM files WHERE path >= ? AND path < ?",
+        (prefix, f"{prefix[:-1]}0"),
+    )
 
 
 def _check_unchanged(
@@ -573,14 +616,7 @@ def _remove_missing(
     lose over MAX_REMOVED_RATIO of them aborts instead, as a listing cut short,
     unless guarded is false (an inbox, which empties out by design).
     """
-    # A range on path, so the files index serves it: every path that starts
-    # with the prefix sorts at or after it and before the prefix with its "/"
-    # replaced by "0", the next character. The root's prefix is just "/".
-    prefix = f"{str(directory).rstrip('/')}/"
-    rows = db.query(
-        "SELECT id, path FROM files WHERE path >= ? AND path < ?",
-        (prefix, f"{prefix[:-1]}0"),
-    )
+    rows = _rows_under(directory)
     gone = [row for row in rows if Path(row["path"]) not in present]
     if guarded and len(rows) >= MIN_FOUND_BASELINE and len(gone) > len(rows) * MAX_REMOVED_RATIO:
         msg = (
@@ -617,17 +653,20 @@ async def index_path_async(
 
     files, stats = scan_source(resolved)
     inbox = _is_inbox(resolved)
+    # Before the shrink gate, which judges the scan against what is indexed.
+    removed = _remove_excluded(resolved)
     if batch_limit is not None:
         files = files[:batch_limit]
     elif not force and not inbox:
         _check_not_shrunk(resolved, len(files))
 
     if not files and stats is None:
-        return []
+        return removed
 
     run_id = db.start_run(str(resolved), len(files))
     try:
         results, to_extract = _partition_unchanged(files, force, stats, resolved)
+        results.extend(removed)
         # Deletions are only trusted from a manifest covering the whole tree.
         if stats is not None and batch_limit is None:
             results.extend(_remove_missing(resolved, set(files), guarded=not inbox))
@@ -660,21 +699,23 @@ def _is_inbox(directory: Path) -> bool:
 
 
 def _check_not_shrunk(directory: Path, files_found: int) -> None:
-    """Abort when a directory suddenly holds far fewer files than last time.
+    """Abort when a directory suddenly holds far fewer files than are indexed.
 
     An unmounted or half-listed source looks exactly like a tree whose files
     were deleted. Refusing keeps a broken mount from passing as a quiet,
-    successful run; trove_reindex on the path skips this check.
+    successful run; trove_reindex on the path skips this check. The baseline
+    is the index, not the last run's count, so files newly excluded by the
+    configuration (removed just before) do not look like a shrink.
     """
-    previous = db.last_completed_run(str(directory))
-    if previous is None or previous["files_found"] < MIN_FOUND_BASELINE:
+    indexed = len(_rows_under(directory))
+    if indexed < MIN_FOUND_BASELINE:
         return
-    if files_found >= previous["files_found"] * MIN_FOUND_RATIO:
+    if files_found >= indexed * MIN_FOUND_RATIO:
         return
     reason = (
         f"found {files_found} files, under {MIN_FOUND_RATIO:.0%} of the "
-        f"{previous['files_found']} found by the last completed run; the source may "
-        "be unmounted. Run trove_reindex on the path if the files really were removed."
+        f"{indexed} indexed there; the source may be unmounted. Run "
+        "trove_reindex on the path if the files really were removed."
     )
     db.abort_run(db.start_run(str(directory), files_found), reason)
     raise IndexAbortedError(str(directory), reason)

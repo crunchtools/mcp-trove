@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from mcp_trove_crunchtools.config import get_config
 from mcp_trove_crunchtools.errors import ExtractionError, UnsupportedFileTypeError
 from mcp_trove_crunchtools.extractor import detect_file_type, extract_text, is_supported
 
@@ -56,11 +57,19 @@ class TestIsSupported:
     def test_supported_extensions(self) -> None:
         assert is_supported(Path("test.txt"))
         assert is_supported(Path("test.md"))
-        assert is_supported(Path("test.py"))
         assert is_supported(Path("test.pdf"))
         assert is_supported(Path("test.docx"))
         assert is_supported(Path("test.json"))
         assert is_supported(Path("test.yaml"))
+
+    @pytest.mark.parametrize("name", ["main.c", "tool.py", "app.conf", "access.log", "local.env"])
+    def test_source_code_skipped_by_default(self, name: str) -> None:
+        assert not is_supported(Path(name))
+
+    def test_source_code_indexed_when_asked(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(get_config(), "index_source_code", True)
+        assert is_supported(Path("tool.py"))
+        assert is_supported(Path("access.log"))
 
     def test_unsupported_extensions(self) -> None:
         assert not is_supported(Path("test.iso"))
