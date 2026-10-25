@@ -148,6 +148,30 @@ class TestSampling:
         assert sample.audio
         assert sample.tags["title"] == "Basement training"
 
+    def test_packets_the_decoder_rejects_are_skipped(self) -> None:
+        """MPEG-PS and Theora files rejected their first packets after a seek."""
+        import av
+
+        bad, good = MagicMock(), MagicMock()
+        bad.decode.side_effect = av.InvalidDataError(1094995529, "Invalid data")
+        good.decode.return_value = ["frame"]
+        container = MagicMock()
+        container.demux.return_value = iter([bad, bad, good])
+
+        assert media._next_frame(container, MagicMock()) == "frame"
+
+    def test_gives_up_after_the_packet_limit(self) -> None:
+        import av
+
+        bad, good = MagicMock(), MagicMock()
+        bad.decode.side_effect = av.InvalidDataError(1094995529, "Invalid data")
+        good.decode.return_value = ["frame"]
+        container = MagicMock()
+        container.demux.return_value = iter([bad] * media.MAX_PACKETS_PER_FRAME + [good])
+
+        assert media._next_frame(container, MagicMock()) is None
+        good.decode.assert_not_called()
+
     def test_fingerprint_follows_content_not_name(self, tmp_path: Path) -> None:
         clip = _make_clip(tmp_path / "clip.mp4")
         copy = tmp_path / "renamed.mp4"

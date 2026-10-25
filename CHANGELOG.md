@@ -10,6 +10,16 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-25
+
+### Fixed
+
+- Two videos sampled at once, each a 4K decoder of about 200 MB, took the
+  indexer past its 1.5 GB limit with images and a PDF in flight. Video and
+  audio are now sampled one file at a time.
+- MPEG program-stream (.mpg) and Ogg Theora files failed whole when the
+  packets after a seek could not be decoded; those packets are skipped.
+
 ## [1.0.0] - 2026-10-25
 
 The interface is now stable under SemVer: MCP tool names, parameters and

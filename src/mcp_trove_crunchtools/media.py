@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 from .config import get_config
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,8 @@ AUDIO_SAMPLE_RATE = 16000
 AUDIO_BIT_RATE = 32000
 # Bytes read from each end of a file for its fingerprint.
 FINGERPRINT_SPAN = 1024 * 1024
+# Packets read after a seek before giving up on a frame there.
+MAX_PACKETS_PER_FRAME = 120
 
 # ISO 6709, as phones write it: "+40.1234-082.9876+250.000/".
 _ISO6709 = re.compile(r"([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)")
@@ -139,17 +142,45 @@ def _frames(container: Any, stream: Any, duration: float | None) -> list[bytes]:
     if width * height > MAX_FRAME_PIXELS:
         logger.warning("Not decoding %dx%d frames, over %d pixels", width, height, MAX_FRAME_PIXELS)
         return []
-    frames: list[bytes] = []
     if not duration or stream.time_base is None:
-        first = next(container.decode(stream), None)
+        first = _next_frame(container, stream)
         return [] if first is None else [_jpeg(first)]
+    frames: list[bytes] = []
     for index in range(FRAME_COUNT):
         target = duration * (0.05 + 0.9 * index / max(1, FRAME_COUNT - 1))
         container.seek(int(target / stream.time_base), stream=stream, backward=True)
-        frame = next(container.decode(stream), None)
+        frame = _next_frame(container, stream)
         if frame is not None:
             frames.append(_jpeg(frame))
     return frames
+
+
+def _next_frame(container: Any, stream: Any) -> Any:
+    """The first frame the decoder produces from here, skipping packets it rejects.
+
+    After a seek into an MPEG program stream or an Ogg Theora file, the
+    first packets can reference frames before the seek point and fail to
+    decode; they are skipped rather than failing the whole file.
+    """
+    return next(_decoded(container, stream, MAX_PACKETS_PER_FRAME), None)
+
+
+def _decoded(container: Any, stream: Any, max_packets: int | None = None) -> Iterator[Any]:
+    """Frames decoded from stream's packets, skipping any the decoder rejects."""
+    import av
+
+    rejected = 0
+    try:
+        for count, packet in enumerate(container.demux(stream)):
+            if max_packets is not None and count >= max_packets:
+                return
+            try:
+                yield from packet.decode()
+            except av.FFmpegError:
+                rejected += 1
+    finally:
+        if rejected:
+            logger.debug("Skipped %d packets the %s decoder rejected", rejected, stream.type)
 
 
 def _jpeg(frame: Any) -> bytes:
@@ -175,7 +206,7 @@ def _audio_clip(container: Any, stream: Any, duration: float | None) -> bytes | 
         encoder = out.add_stream("mp3", rate=AUDIO_SAMPLE_RATE, layout="mono")
         encoder.bit_rate = AUDIO_BIT_RATE
         written = 0.0
-        for frame in container.decode(stream):
+        for frame in _decoded(container, stream):
             for converted in resampler.resample(frame):
                 for packet in encoder.encode(converted):
                     out.mux(packet)
