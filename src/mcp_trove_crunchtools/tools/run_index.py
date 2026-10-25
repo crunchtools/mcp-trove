@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -58,7 +59,9 @@ def run_index() -> int:
                     code = 1
     except Exception as exc:
         # Whatever broke, the summary still has to say so: monitoring would
-        # otherwise keep reading the previous run's result.
+        # otherwise keep reading the previous run's result. The traceback
+        # goes to the journal for whoever has to diagnose it.
+        traceback.print_exc()
         code = _report(summary, f"run failed: {exc}")
 
     summary["finished_at"] = _now()
