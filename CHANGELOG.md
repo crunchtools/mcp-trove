@@ -10,6 +10,14 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-10-25
+
+### Changed
+
+- `last_run.json` is world-readable (it holds counts and statuses only) so a
+  monitor running as another user can read it, and records `vision_budget` and
+  `latest_backup` (name and time), since the backup directory is owner-only.
+
 ## [0.11.0] - 2026-10-25
 
 ### Added

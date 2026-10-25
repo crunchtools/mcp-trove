@@ -425,3 +425,20 @@ class TestIndexEntryPoint:
             trove_pkg.main()
 
         exit_.assert_called_once_with(1)
+
+
+class TestSummaryForMonitoring:
+    def test_summary_is_readable_and_names_the_backup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "docs").mkdir()
+        monkeypatch.setenv("TROVE_DB", str(tmp_path / "data" / "trove.db"))
+        monkeypatch.setenv("TROVE_PATHS", str(tmp_path / "docs"))
+
+        assert run_index() == 0
+
+        status = tmp_path / "data" / "last_run.json"
+        assert status.stat().st_mode & 0o777 == 0o644
+        summary = json.loads(status.read_text())
+        assert summary["latest_backup"]["file"].startswith("trove-")
+        assert summary["vision_budget"] == 3000
