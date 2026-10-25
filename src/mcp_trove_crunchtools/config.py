@@ -73,6 +73,12 @@ class Config:
         self.backup_dir: str = os.environ.get("TROVE_BACKUP_DIR", str(db_dir / "backups"))
         self.backup_keep: int = int(os.environ.get("TROVE_BACKUP_KEEP", str(DEFAULT_BACKUP_KEEP)))
         self.status_file: str = os.environ.get("TROVE_STATUS_FILE", str(db_dir / "last_run.json"))
+        # Directory of per-path file listings written by the host before a run
+        # (see manifest.py); unset, the scan walks the tree.
+        self.manifest_dir: str = os.environ.get("TROVE_MANIFEST_DIR", "")
+        # ONNX threads for embedding. fastembed's default is one spinning thread
+        # per core, and the MCP server loads a second model on the same host.
+        self.embed_threads: int = int(os.environ.get("TROVE_EMBED_THREADS", "2"))
         # Owner-only unless a monitor running as another user needs it: the
         # summary can carry error text that names files.
         self.status_file_mode: int = int(os.environ.get("TROVE_STATUS_FILE_MODE", "600"), 8)

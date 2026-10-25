@@ -48,6 +48,7 @@ async def trove_index(path: str, *, new_vision_budget: bool = True) -> dict[str,
     skipped = sum(1 for r in results if r["status"] == "skipped")
     errored = sum(1 for r in results if r["status"] == "error")
     deferred = sum(1 for r in results if r["status"] == "deferred")
+    removed = sum(1 for r in results if r["status"] == "removed")
     total_chunks = sum(int(r.get("chunk_count", 0)) for r in results)
 
     response: dict[str, Any] = {
@@ -56,6 +57,7 @@ async def trove_index(path: str, *, new_vision_budget: bool = True) -> dict[str,
         "files_skipped": skipped,
         "files_errored": errored,
         "files_deferred": deferred,
+        "files_removed": removed,
         "total_chunks": total_chunks,
         "details": _cap_details(results),
     }

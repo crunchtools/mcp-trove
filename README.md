@@ -70,8 +70,10 @@ claude mcp add mcp-trove-crunchtools -- uvx mcp-trove-crunchtools
 |----------|---------|-------------|
 | `TROVE_DB` | `~/.local/share/mcp-trove/trove.db` | SQLite database path |
 | `TROVE_PATHS` | (none) | Directories to index in background mode, separated by `:` (`;` on Windows) |
-| `TROVE_INDEX_WORKERS` | `20` | Concurrent embedding workers |
-| `TROVE_INDEX_BATCH` | `50` | Files per indexing batch |
+| `TROVE_INDEX_WORKERS` | `20` | Images and videos extracted at once. PDFs run one at a time and text files two, whatever this is set to |
+| `TROVE_INDEX_BATCH` | `50` | Unused since 0.12.0, when files began streaming through extraction instead of in batches; still accepted |
+| `TROVE_MANIFEST_DIR` | (none) | Directory of per-path file listings the host writes before a run (see Background Indexing); unset, each run walks its trees |
+| `TROVE_EMBED_THREADS` | `2` | ONNX threads for embedding |
 | `TROVE_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | fastembed model name |
 | `TROVE_EXCLUDE_PATTERNS` | `*.iso,*.zip,...` | Glob patterns to skip |
 | `TROVE_CHUNK_SIZE` | `1000` | Characters per text chunk |
@@ -108,6 +110,22 @@ Set up a systemd timer to keep your index fresh:
 ```bash
 TROVE_PATHS=~/Documents:~/AutoSync mcp-trove-crunchtools --index
 ```
+
+On a network-backed source, walking the tree is the slow part: one listing per
+directory and one stat per file, each a round trip. Point `TROVE_MANIFEST_DIR`
+at a directory holding one rclone `lsjson` listing per index path, at that path
+under the directory with `.lsjson` appended, and the scan reads it instead. For
+the index path `/pcloud/Documents/Academic`:
+
+```bash
+mkdir -p /manifests/pcloud/Documents
+rclone lsjson -R --fast-list --files-only --no-mimetype pcloud:Documents/Academic \
+  > /manifests/pcloud/Documents/Academic.lsjson
+```
+
+A listing over 6 hours old, missing or unreadable falls back to the walk. With a
+manifest, files it no longer lists are removed from the index, unless a tree of
+100 or more files would lose over 10% at once, which aborts the path instead.
 
 An `--index` run is built to be left alone:
 
