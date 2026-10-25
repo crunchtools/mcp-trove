@@ -45,6 +45,10 @@ class Config:
         default_db = str(Path.home() / ".local" / "share" / "mcp-trove" / "trove.db")
         self.db_path: str = os.environ.get("TROVE_DB", default_db)
         self.index_paths: list[str] = _parse_paths(os.environ.get("TROVE_PATHS", ""))
+        # Inboxes, such as a phone's upload folder, whose files are filed away
+        # elsewhere: emptying out is normal, so the shrink and removal guards
+        # that catch a dead mount are not applied to them.
+        self.inbox_paths: list[str] = _parse_paths(os.environ.get("TROVE_INBOX_PATHS", ""))
         self.index_workers: int = int(
             os.environ.get("TROVE_INDEX_WORKERS", str(DEFAULT_INDEX_WORKERS))
         )

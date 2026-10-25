@@ -10,6 +10,7 @@ import gc
 import hashlib
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -251,11 +252,14 @@ def _extract_one(
     }
 
 
-def _store_one(extraction: dict[str, Any]) -> dict[str, str | int]:
+def _store_one(
+    extraction: dict[str, Any], vectors: list[bytes] | None = None
+) -> dict[str, str | int]:
     """Store extracted content in the database (phase 2: embed + SQLite).
 
-    Takes the output of _extract_one and embeds/stores it.
-    Must run sequentially (SQLite is single-writer).
+    Takes the output of _extract_one and embeds/stores it, or stores the
+    vectors already made for it by _embed_chunks. Must run sequentially
+    (SQLite is single-writer) and on the thread that opened the database.
     """
     if extraction["status"] == "skipped":
         return {
@@ -273,14 +277,10 @@ def _store_one(extraction: dict[str, Any]) -> dict[str, str | int]:
     chunks: list[str] = extraction["chunks"]
     existing_id = extraction.get("existing_id")
 
-    # Embed before writing anything, in sub-batches so a large file's vectors
-    # are never all held as Python float lists (RT #1542); each batch is
-    # kept as float32 bytes, 1.5 KB a chunk. An embedding failure then
-    # leaves the index exactly as it was, including the file's old entry.
-    vectors: list[bytes] = []
-    for start in range(0, len(chunks), EMBED_BATCH_SIZE):
-        batch = chunks[start : start + EMBED_BATCH_SIZE]
-        vectors.extend(sqlite_vec.serialize_float32(e) for e in embed_texts(batch))
+    # Embed before writing anything: an embedding failure then leaves the
+    # index exactly as it was, including the file's old entry.
+    if vectors is None:
+        vectors = _embed_chunks(chunks)
 
     # One transaction per file: a process killed part way (OOM, reboot) used
     # to leave a file row matching its checksum but missing chunks, which was
@@ -296,6 +296,26 @@ def _store_one(extraction: dict[str, Any]) -> dict[str, str | int]:
         db.resolve_errors(path_str)
 
     return {"path": path_str, "status": "indexed", "chunk_count": len(chunks)}
+
+
+_EMBED_LOCK = threading.Lock()
+
+
+def _embed_chunks(chunks: list[str]) -> list[bytes]:
+    """Embed chunks in sub-batches, as float32 bytes.
+
+    Sub-batches keep a large file's vectors from ever being held as Python
+    float lists (RT #1542); each is kept as bytes, 1.5 KB a chunk. Touches
+    no database, so it can run on a worker thread. One file embeds at a time
+    per process, even when index calls overlap in the MCP server, so the
+    model's threads and memory stay bounded.
+    """
+    vectors: list[bytes] = []
+    with _EMBED_LOCK:
+        for start in range(0, len(chunks), EMBED_BATCH_SIZE):
+            batch = chunks[start : start + EMBED_BATCH_SIZE]
+            vectors.extend(sqlite_vec.serialize_float32(e) for e in embed_texts(batch))
+    return vectors
 
 
 def index_file(path: Path, force: bool = False) -> dict[str, str | int]:
@@ -442,7 +462,7 @@ async def _extract_and_store(
                 break
             done, _ = await asyncio.wait(in_flight, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
-                results.append(_settle(task, in_flight.pop(task), run_id, hung))
+                results.append(await _settle(task, in_flight.pop(task), run_id, hung))
                 stored += 1
                 if stored % PROGRESS_EVERY == 0:
                     _update_progress(run_id, results)
@@ -474,16 +494,26 @@ class _HungReads:
             )
 
 
-def _settle(
+async def _settle(
     task: asyncio.Task[dict[str, Any]],
     item: tuple[Path, str, int, int | None, float],
     run_id: int | None,
     hung: _HungReads,
 ) -> dict[str, str | int]:
-    """Store a finished extraction, or record why it failed."""
+    """Store a finished extraction, or record why it failed.
+
+    Embedding a big file takes minutes of CPU, so it runs on a thread. On
+    the event loop it stalled the loop, and the timeouts of extractions
+    still in flight fired on reads that had long finished, five of which
+    aborted a run as a hung source (RT #1542).
+    """
     error = task.exception()
     if error is None:
-        return _store_one(task.result())
+        extraction = task.result()
+        vectors = None
+        if extraction["status"] != "skipped":
+            vectors = await asyncio.to_thread(_embed_chunks, extraction["chunks"])
+        return _store_one(extraction, vectors)
     result = _record_failure(item, error, run_id)
     if isinstance(error, TimeoutError):
         hung.saw_timeout(item[0])
@@ -533,12 +563,15 @@ def _release_memory() -> None:
         ctypes.CDLL("libc.so.6").malloc_trim(0)
 
 
-def _remove_missing(directory: Path, present: set[Path]) -> list[dict[str, str | int]]:
+def _remove_missing(
+    directory: Path, present: set[Path], guarded: bool = True
+) -> list[dict[str, str | int]]:
     """Drop index entries under directory that its manifest no longer lists.
 
     Only with a manifest: a walk that fails part way cannot be told from
     deletion. A tree of MIN_FOUND_BASELINE or more indexed files that would
-    lose over MAX_REMOVED_RATIO of them aborts instead, as a listing cut short.
+    lose over MAX_REMOVED_RATIO of them aborts instead, as a listing cut short,
+    unless guarded is false (an inbox, which empties out by design).
     """
     # A range on path, so the files index serves it: every path that starts
     # with the prefix sorts at or after it and before the prefix with its "/"
@@ -549,7 +582,7 @@ def _remove_missing(directory: Path, present: set[Path]) -> list[dict[str, str |
         (prefix, f"{prefix[:-1]}0"),
     )
     gone = [row for row in rows if Path(row["path"]) not in present]
-    if len(rows) >= MIN_FOUND_BASELINE and len(gone) > len(rows) * MAX_REMOVED_RATIO:
+    if guarded and len(rows) >= MIN_FOUND_BASELINE and len(gone) > len(rows) * MAX_REMOVED_RATIO:
         msg = (
             f"the manifest lacks {len(gone)} of {len(rows)} indexed files, over "
             f"{MAX_REMOVED_RATIO:.0%}; it may be incomplete. Remove them with "
@@ -583,9 +616,10 @@ async def index_path_async(
         return []
 
     files, stats = scan_source(resolved)
+    inbox = _is_inbox(resolved)
     if batch_limit is not None:
         files = files[:batch_limit]
-    elif not force:
+    elif not force and not inbox:
         _check_not_shrunk(resolved, len(files))
 
     if not files and stats is None:
@@ -596,7 +630,7 @@ async def index_path_async(
         results, to_extract = _partition_unchanged(files, force, stats, resolved)
         # Deletions are only trusted from a manifest covering the whole tree.
         if stats is not None and batch_limit is None:
-            results.extend(_remove_missing(resolved, set(files)))
+            results.extend(_remove_missing(resolved, set(files), guarded=not inbox))
         # Record skipped count immediately so status queries see progress
         _update_progress(run_id, results)
         await _extract_and_store(to_extract, results, run_id)
@@ -618,6 +652,11 @@ def _finish(run_id: int, results: list[dict[str, str | int]]) -> None:
         files_errored=sum(1 for r in results if r["status"] == "error"),
         total_chunks=sum(int(r.get("chunk_count", 0)) for r in results),
     )
+
+
+def _is_inbox(directory: Path) -> bool:
+    """Whether directory is one of TROVE_INBOX_PATHS."""
+    return any(Path(inbox).resolve() == directory for inbox in get_config().inbox_paths)
 
 
 def _check_not_shrunk(directory: Path, files_found: int) -> None:
