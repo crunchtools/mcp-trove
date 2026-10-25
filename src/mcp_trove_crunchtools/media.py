@@ -169,13 +169,18 @@ def _decoded(container: Any, stream: Any, max_packets: int | None = None) -> Ite
     """Frames decoded from stream's packets, skipping any the decoder rejects."""
     import av
 
-    for count, packet in enumerate(container.demux(stream)):
-        if max_packets is not None and count >= max_packets:
-            return
-        try:
-            yield from packet.decode()
-        except av.FFmpegError:
-            continue
+    rejected = 0
+    try:
+        for count, packet in enumerate(container.demux(stream)):
+            if max_packets is not None and count >= max_packets:
+                return
+            try:
+                yield from packet.decode()
+            except av.FFmpegError:
+                rejected += 1
+    finally:
+        if rejected:
+            logger.debug("Skipped %d packets the %s decoder rejected", rejected, stream.type)
 
 
 def _jpeg(frame: Any) -> bytes:
