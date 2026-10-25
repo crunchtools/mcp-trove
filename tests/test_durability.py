@@ -462,3 +462,29 @@ class TestSummaryForMonitoring:
         assert run_index() == 0
 
         assert json.loads(env.read_text())["latest_backup"] is None
+
+
+class TestRetryMigration:
+    def test_oversize_and_embedding_failures_released(self, tmp_path: Path) -> None:
+        """1.0.3 downscales big images and repairs surrogates, so both get a retry."""
+        path = str(tmp_path / "trove.db")
+        db.get_db(path)
+        db.insert_error(
+            None,
+            "/p/pano.jpg",
+            "25000000 bytes exceeds the inline media limit",
+            "permanent",
+            (9, 1.0),
+        )
+        db.insert_error(
+            None, "/p/note.rtf", "Embedding failed: TextEncodeInput", "permanent", (9, 1.0)
+        )
+        db.insert_error(None, "/p/scan.pdf", "broken", "permanent", (9, 1.0))
+        db.get_db().execute("PRAGMA user_version = 3")
+        db.get_db().commit()
+        db.get_db().close()
+        db._db = None
+
+        db.get_db(path)
+
+        assert db.known_failures() == {("/p/scan.pdf", 9, 1.0)}

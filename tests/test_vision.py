@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import io
 import os
 import sys
 import tempfile
@@ -13,6 +15,7 @@ import pytest
 from mcp_trove_crunchtools.errors import ExtractionError
 from mcp_trove_crunchtools.vision import (
     OPENROUTER_MAX_MEDIA_BYTES,
+    OVERSIZE_IMAGE_SIDE,
     GeminiBackend,
     OllamaBackend,
     OpenAIBackend,
@@ -327,6 +330,30 @@ class TestOpenRouterBackend:
         with pytest.raises(ExtractionError, match="inline media limit"):
             backend.caption(clip, "video")
         backend._client.chat.completions.create.assert_not_called()
+
+    def test_oversized_image_sent_downscaled(self, tmp_path: Path) -> None:
+        """A photo over the inline limit is captioned from a JPEG copy, not failed."""
+        import numpy as np
+        from PIL import Image
+
+        noise = np.random.default_rng(1).integers(0, 255, (3000, 3000, 3), dtype=np.uint8)
+        img = tmp_path / "pano.png"
+        Image.fromarray(noise).save(img, compress_level=0)
+        assert img.stat().st_size > OPENROUTER_MAX_MEDIA_BYTES
+        backend = OpenRouterBackend("google/gemini-3.1-flash-lite", "describe this")
+        client = MagicMock()
+        client.chat.completions.create.return_value.choices = [
+            MagicMock(message=MagicMock(content="a wide valley"))
+        ]
+        backend._client = client
+
+        assert backend.caption(img, "image") == "a wide valley"
+        url = client.chat.completions.create.call_args.kwargs["messages"][0]["content"][1][
+            "image_url"
+        ]["url"]
+        assert url.startswith("data:image/jpeg;base64,")
+        sent = Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1])))
+        assert max(sent.size) == OVERSIZE_IMAGE_SIDE
 
     def test_unreadable_key_file(self, tmp_path: Path) -> None:
         backend = OpenRouterBackend("google/gemini-3.1-flash-lite", "describe this")

@@ -10,6 +10,20 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-10-25
+
+### Fixed
+
+- One file whose text could not be embedded failed the whole configured
+  path it was in: an RTF with an emoji (striprtf writes it as two lone
+  UTF-16 surrogates) aborted `/pcloud/Documents/Recreational` after 75
+  minutes. Extracted text now has surrogate pairs rejoined and strays
+  replaced, and an embedding failure is recorded against that file alone.
+- Images over the 20 MB inline limit of the OpenRouter backend were a
+  permanent failure. They are now captioned from a JPEG copy 2048 pixels on
+  the long side.
+- Migration 4 releases both kinds of recorded failure, so they are retried.
+
 ## [1.0.2] - 2026-10-25
 
 ### Fixed
