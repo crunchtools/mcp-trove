@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import gc
 import logging
-from typing import TYPE_CHECKING, Any
+import math
+import tempfile
+from pathlib import Path
+from typing import Any
 
 from .config import get_config
 from .errors import ExtractionError, UnsupportedFileTypeError
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,14 @@ TEXT_EXTENSIONS = {
 }
 
 PDF_EXTENSIONS = {".pdf"}
+# Below this many characters of text on its leading pages, a PDF is treated
+# as a scan and its first page is captioned through the vision backend.
+SCANNED_PDF_MIN_CHARS = 20
+SCANNED_PDF_CHECK_PAGES = 5  # leading pages looked at to decide
+SCANNED_PDF_DPI = 150
+# A PDF can declare an enormous page; the render is scaled down to stay
+# under this many pixels (about 12 MB as RGB) whatever the page size.
+SCANNED_PDF_MAX_PIXELS = 4_000_000
 DOCX_EXTENSIONS = {".docx"}
 MARKDOWN_EXTENSIONS = {".md", ".markdown"}
 
@@ -115,18 +123,22 @@ def is_supported(path: Path) -> bool:
     return path.suffix.lower() in _get_supported_extensions()
 
 
-def extract_text(path: Path) -> str:
-    """Extract text content from a file."""
+def extract_text(path: Path, checksum: str | None = None) -> str:
+    """Extract text content from a file.
+
+    checksum, the file's SHA-256, lets vision captions be reused across files
+    with the same content; without it every caption is a new API call.
+    """
     file_type = detect_file_type(path)
 
     if file_type == "pdf":
-        return _extract_pdf(path)
+        return _extract_pdf(path, checksum)
     if file_type == "docx":
         return _extract_docx(path)
     if file_type == "image":
-        return _extract_image(path)
+        return _extract_image(path, checksum)
     if file_type == "video":
-        return _extract_video(path)
+        return _extract_video(path, checksum)
     return _extract_text_file(path)
 
 
@@ -137,11 +149,13 @@ def _extract_text_file(path: Path) -> str:
         raise ExtractionError(str(path), str(exc)) from exc
 
 
-def _extract_pdf(path: Path) -> str:
+def _extract_pdf(path: Path, checksum: str | None = None) -> str:
     """Convert the first TROVE_PDF_MAX_PAGES pages of a PDF to markdown.
 
     Converting a whole 20-80 MB service manual OOM-killed a 1.5 GB indexer
     (RT #1542); the opening pages are enough to tell what a document is about.
+    A scan has no text layer, so its first page is captioned instead, when a
+    vision backend is configured and TROVE_VISION_PDF_SCANS allows it.
     """
     try:
         import pymupdf
@@ -150,7 +164,10 @@ def _extract_pdf(path: Path) -> str:
     except ImportError as exc:
         raise ExtractionError(str(path), "pymupdf4llm not installed") from exc
 
+    from .vision import get_backend
+
     max_pages = get_config().pdf_max_pages
+    scan_png: bytes | None = None
     try:
         with pymupdf.open(str(path)) as doc:
             page_count = doc.page_count
@@ -162,6 +179,13 @@ def _extract_pdf(path: Path) -> str:
             markdown: str = pymupdf4llm.to_markdown(
                 doc, pages=pages, hdr_info=IdentifyHeaders(doc, pages=pages)
             )
+            if (
+                pages
+                and get_config().vision_pdf_scans
+                and get_backend() is not None
+                and _is_scan(doc, pages[:SCANNED_PDF_CHECK_PAGES])
+            ):
+                scan_png = _render_page(doc[0])
     except Exception as exc:
         raise ExtractionError(str(path), str(exc)) from exc
     finally:
@@ -170,7 +194,46 @@ def _extract_pdf(path: Path) -> str:
         # past its 1.5 GB limit (RT #1542).
         pymupdf.TOOLS.store_shrink(100)
         gc.collect()
+    if scan_png is not None:
+        caption = _caption_png(scan_png, checksum)
+        markdown = f"[File] {path.name}\n[Scanned page 1] {caption}\n{markdown}".rstrip()
     return markdown
+
+
+def _is_scan(doc: Any, pages: list[int]) -> bool:
+    """True when the pages hold under SCANNED_PDF_MIN_CHARS of text.
+
+    Stops at the first page that reaches it, so a long text PDF is not
+    read twice.
+    """
+    text_chars = 0
+    for page in pages:
+        text_chars += len(doc[page].get_text().strip())
+        if text_chars >= SCANNED_PDF_MIN_CHARS:
+            return False
+    return True
+
+
+def _render_page(page: Any) -> bytes:
+    """Render a PDF page to PNG at SCANNED_PDF_DPI, within SCANNED_PDF_MAX_PIXELS."""
+    import pymupdf
+
+    zoom = SCANNED_PDF_DPI / 72
+    pixels = page.rect.width * page.rect.height * zoom * zoom
+    if pixels > SCANNED_PDF_MAX_PIXELS:
+        zoom *= math.sqrt(SCANNED_PDF_MAX_PIXELS / pixels)
+    png: bytes = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom)).tobytes("png")
+    return png
+
+
+def _caption_png(png: bytes, checksum: str | None) -> str:
+    """Caption a rendered page through the vision backend, via a private temp file."""
+    from .vision import caption_cached
+
+    with tempfile.TemporaryDirectory(prefix="trove-scan-") as scan_dir:
+        page = Path(scan_dir) / "page1.png"
+        page.write_bytes(png)
+        return caption_cached(page, "image", checksum)
 
 
 def _extract_docx(path: Path) -> str:
@@ -278,13 +341,9 @@ def _dms_to_decimal(dms: tuple[float, float, float]) -> float:
     return dms[0] + dms[1] / 60.0 + dms[2] / 3600.0
 
 
-def _extract_image(path: Path) -> str:
+def _extract_image(path: Path, checksum: str | None = None) -> str:
     """Extract text from an image via vision backend + EXIF metadata."""
-    from .vision import get_backend
-
-    backend = get_backend()
-    if backend is None:
-        raise ExtractionError(str(path), "No vision backend configured")
+    from .vision import caption_cached
 
     parts: list[str] = [f"[File] {path.name}"]
 
@@ -292,19 +351,15 @@ def _extract_image(path: Path) -> str:
     if exif:
         parts.append(exif)
 
-    caption = backend.caption(path, "image")
+    caption = caption_cached(path, "image", checksum)
     parts.append(f"[Caption] {caption}")
 
     return "\n".join(parts)
 
 
-def _extract_video(path: Path) -> str:
+def _extract_video(path: Path, checksum: str | None = None) -> str:
     """Extract text from a video via vision backend."""
-    from .vision import get_backend
+    from .vision import caption_cached
 
-    backend = get_backend()
-    if backend is None:
-        raise ExtractionError(str(path), "No vision backend configured")
-
-    caption = backend.caption(path, "video")
+    caption = caption_cached(path, "video", checksum)
     return f"[File] {path.name}\n[Caption] {caption}"

@@ -105,3 +105,15 @@ check = "direct_exit"
 path = "src/mcp_trove_crunchtools/__init__.py"
 justification = "main() is the console entry point. In --index mode it ends with os._exit(code) on purpose: a file read stuck in the kernel on a hung FUSE mount leaves a worker thread that cannot be cancelled or joined, and a normal exit would wait on it forever (RT #1542)."
 classification = "by_design"
+
+[[exceptions]]
+check = "single_use_helpers"
+path = "tests/test_cost_controls.py"
+justification = "_statuses is called from nine tests to compare sorted per-file statuses; the check miscounts call sites inside test classes."
+classification = "by_design"
+
+[[exceptions]]
+check = "single_use_helpers"
+path = "src/mcp_trove_crunchtools/vision.py"
+justification = "_run_budget is called from calls_made, budget_spent and _reserve_call; it holds the one rule for which budget applies (the run's, else the default). The check miscounts its call sites."
+classification = "by_design"

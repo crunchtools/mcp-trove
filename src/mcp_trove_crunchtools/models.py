@@ -39,6 +39,7 @@ class ReindexParams(BaseModel, extra="forbid"):
     """Parameters for reindexing."""
 
     path: str | None = Field(default=None, max_length=MAX_PATH_LENGTH)
+    force: bool = False
 
 
 class RemoveParams(BaseModel, extra="forbid"):

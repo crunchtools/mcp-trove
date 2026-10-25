@@ -282,10 +282,7 @@ class TestOpenRouterBackend:
         assert media["type"] == "video_url"
         assert media["video_url"]["url"].startswith("data:video/mp4;base64,")
         assert kwargs["extra_body"]["provider"] == {"zdr": True, "data_collection": "deny"}
-        assert kwargs["extra_body"]["models"] == [
-            "google/gemini-3.1-flash-lite",
-            "google/gemini-3.8-flash",
-        ]
+        assert kwargs["extra_body"]["models"] == ["google/gemini-3.1-flash-lite"]
 
     def test_empty_response(self, tmp_path: Path) -> None:
         img = tmp_path / "a.png"

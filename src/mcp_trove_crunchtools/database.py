@@ -29,8 +29,10 @@ _db: sqlite3.Connection | None = None
 # below leave committing to the block.
 _tx_depth = 0
 
-# Schema version _migrate records in PRAGMA user_version; bump it with each new step.
-SCHEMA_VERSION = 1
+# Unresolved failures at one size+mtime after which a file is not retried
+# until it changes; a permanent failure stops retries at once.
+MAX_TRANSIENT_FAILURES = 5
+CAPTION_KEEP_DAYS = 90
 STALE_RUN_HOURS = 12
 
 SCHEMA = """
@@ -102,6 +104,13 @@ CREATE TABLE IF NOT EXISTS index_errors (
 CREATE INDEX IF NOT EXISTS idx_errors_path ON index_errors(path);
 CREATE INDEX IF NOT EXISTS idx_errors_resolved ON index_errors(resolved);
 
+CREATE TABLE IF NOT EXISTS captions (
+    sha256 TEXT PRIMARY KEY,
+    model TEXT NOT NULL,
+    caption TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -162,26 +171,51 @@ def _check_meta(conn: sqlite3.Connection) -> None:
     )
 
 
+def _repair_partial_files(conn: sqlite3.Connection) -> None:
+    """Migration 1: drop file rows a killed run left without all their chunks.
+
+    Before 0.10.0 a file row was committed before its chunks, so a process
+    killed mid-file (OOM, reboot) left a row that matched its checksum and
+    was skipped forever (RT #1542). Files that really have no text are
+    re-extracted once, which is cheap.
+    """
+    broken = [
+        row[0]
+        for row in conn.execute(
+            "SELECT f.id FROM files f WHERE f.chunk_count = 0 "
+            "OR f.chunk_count > (SELECT count(*) FROM chunks c WHERE c.file_id = f.id)"
+        )
+    ]
+    for file_id in broken:
+        _delete_file_rows(conn, file_id)
+    if broken:
+        logger.warning("Removed %d incompletely indexed files for re-indexing", len(broken))
+
+
+def _add_error_versions(conn: sqlite3.Connection) -> None:
+    """Migration 2: record the size and mtime each failure happened at.
+
+    A file that keeps failing is then not re-downloaded, and re-captioned,
+    every night until it changes.
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(index_errors)")}
+    if "file_size" not in columns:
+        conn.execute("ALTER TABLE index_errors ADD COLUMN file_size INTEGER")
+    if "mtime" not in columns:
+        conn.execute("ALTER TABLE index_errors ADD COLUMN mtime REAL")
+
+
+# Applied in order; PRAGMA user_version records how many have run. Append
+# new steps, never reorder or remove one.
+MIGRATIONS = (_repair_partial_files, _add_error_versions)
+SCHEMA_VERSION = len(MIGRATIONS)
+
+
 def _migrate(conn: sqlite3.Connection) -> None:
-    """Bring the schema and data up to SCHEMA_VERSION, once per version."""
+    """Run the migrations this database has not had yet."""
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    if version < 1:
-        # Before 0.10.0 a file row was committed before its chunks, so a
-        # process killed mid-file (OOM, reboot) left a row that matched its
-        # checksum and was skipped forever with no or partial chunks
-        # (RT #1542). Drop those rows so the next run indexes them again.
-        # Files that really have no text are re-extracted once, which is cheap.
-        broken = [
-            row[0]
-            for row in conn.execute(
-                "SELECT f.id FROM files f WHERE f.chunk_count = 0 "
-                "OR f.chunk_count > (SELECT count(*) FROM chunks c WHERE c.file_id = f.id)"
-            )
-        ]
-        for file_id in broken:
-            _delete_file_rows(conn, file_id)
-        if broken:
-            logger.warning("Removed %d incompletely indexed files for re-indexing", len(broken))
+    for step in MIGRATIONS[version:]:
+        step(conn)
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
@@ -578,12 +612,49 @@ def insert_error(
     path: str,
     error_message: str,
     error_type: str,
+    version: tuple[int, float] | None = None,
 ) -> int:
-    """Record a per-file indexing failure."""
+    """Record a per-file indexing failure, with the (size, mtime) it happened at."""
+    file_size, mtime = version if version else (None, None)
     return execute(
-        "INSERT INTO index_errors (run_id, path, error_message, error_type) VALUES (?, ?, ?, ?)",
-        (run_id, path, error_message, error_type),
+        "INSERT INTO index_errors (run_id, path, error_message, error_type, file_size, mtime) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (run_id, path, error_message, error_type, file_size, mtime),
     )
+
+
+def known_failures() -> set[tuple[str, int, float]]:
+    """(path, size, mtime) of file versions that failed in a way not worth retrying.
+
+    One permanent failure, or MAX_TRANSIENT_FAILURES transient ones, at the
+    same size and mtime. A changed file is always retried. Loaded once per
+    scan rather than queried file by file.
+    """
+    rows = query(
+        "SELECT path, file_size, mtime FROM index_errors "
+        "WHERE resolved = 0 AND file_size IS NOT NULL AND mtime IS NOT NULL "
+        "GROUP BY path, file_size, mtime "
+        "HAVING sum(error_type = 'permanent') > 0 OR count(*) >= ?",
+        (MAX_TRANSIENT_FAILURES,),
+    )
+    return {(row["path"], row["file_size"], row["mtime"]) for row in rows}
+
+
+def prune_captions(max_age_days: int = CAPTION_KEEP_DAYS) -> int:
+    """Drop cached captions whose content left the index more than max_age_days ago.
+
+    A caption is kept while any indexed file has its content, and for a
+    while after, so a folder moved out and back in is not paid for twice.
+    Returns the rows removed.
+    """
+    db = get_db()
+    cursor = db.execute(
+        "DELETE FROM captions WHERE created_at < datetime('now', ?) "
+        "AND sha256 NOT IN (SELECT checksum FROM files)",
+        (f"-{max_age_days} days",),
+    )
+    _commit(db)
+    return cursor.rowcount
 
 
 def resolve_errors(path: str) -> int:

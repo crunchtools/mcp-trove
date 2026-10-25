@@ -72,6 +72,16 @@ class IndexAbortedError(TroveError):
         super().__init__(f"Indexing {path} aborted: {reason}")
 
 
+class VisionDeferredError(TroveError):
+    """Raised when this run's vision budget is spent; the file waits for the next run."""
+
+    def __init__(self, path: str, limit: int) -> None:
+        super().__init__(
+            f"Vision budget of {limit} calls for this run is spent; {path} is deferred "
+            "to the next run (TROVE_VISION_MAX_CALLS_PER_RUN)"
+        )
+
+
 class UnsupportedFileTypeError(TroveError):
     """Raised when a file type is not supported for indexing."""
 
@@ -84,3 +94,14 @@ class InvalidInputError(TroveError):
 
     def __init__(self, reason: str) -> None:
         super().__init__(f"Invalid input: {reason}")
+
+
+class ReindexAllNotConfirmedError(InvalidInputError):
+    """Raised when a whole-index reindex is asked for without force=True."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Reindexing the whole index re-reads every file, and re-captions any image "
+            "or video whose cached caption came from another vision model. Pass a path, "
+            "or force=true to reindex everything."
+        )

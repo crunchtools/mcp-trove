@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import base64
+import contextvars
 import json
 import logging
 import os
+import sqlite3
+import threading
 import urllib.request
 from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import SecretStr
 
 from .config import get_config
-from .errors import ExtractionError
+from .errors import ExtractionError, VisionDeferredError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -163,7 +166,6 @@ class OpenAIBackend:
 
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-OPENROUTER_FALLBACK_MODEL = "google/gemini-3.8-flash"
 # Media is sent inline as a base64 data URL, so cap what we read into memory.
 OPENROUTER_MAX_MEDIA_BYTES = 20 * 1024 * 1024
 
@@ -185,7 +187,8 @@ class OpenRouterBackend:
 
     Images go as image_url and videos as video_url base64 data URLs. The
     provider block keeps every request on ZDR endpoints that do not collect
-    data; a fallback model covers upstream rate limits.
+    data. TROVE_VISION_FALLBACK_MODEL, when set, is tried when the first
+    model is rate limited.
     """
 
     def __init__(self, model: str, prompt: str) -> None:
@@ -230,8 +233,9 @@ class OpenRouterBackend:
             media = {"type": "image_url", "image_url": {"url": data_url}}
 
         models = [self._model]
-        if self._model != OPENROUTER_FALLBACK_MODEL:
-            models.append(OPENROUTER_FALLBACK_MODEL)
+        fallback = get_config().vision_fallback_model
+        if fallback and fallback != self._model:
+            models.append(fallback)
 
         try:
             response = client.chat.completions.create(
@@ -293,6 +297,109 @@ class OllamaBackend:
         if response_text:
             return str(response_text)
         raise ExtractionError(str(path), "Ollama returned empty response")
+
+
+class _Budget:
+    """One run's count of vision API calls."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.lock = threading.Lock()
+
+
+# Each run's budget travels in its context, which asyncio.to_thread copies
+# into the worker threads, so overlapping runs (two MCP tool calls, say)
+# count separately. Calls made outside any run share the default budget.
+_current_budget: contextvars.ContextVar[_Budget | None] = contextvars.ContextVar(
+    "trove_vision_budget", default=None
+)
+_default_budget = _Budget()
+_cache_local = threading.local()
+# Striped, so the lock set stays fixed however many files a run sees.
+_CAPTION_LOCKS = tuple(threading.Lock() for _ in range(256))
+
+
+def _run_budget() -> _Budget:
+    """The current run's budget, or the shared default outside any run."""
+    return _current_budget.get() or _default_budget
+
+
+def reset_budget() -> None:
+    """Start a new vision budget for the run in the current context."""
+    _current_budget.set(_Budget())
+
+
+def calls_made() -> int:
+    """Vision API calls made under the current run's budget."""
+    return _run_budget().calls
+
+
+def budget_spent() -> bool:
+    """True once the current run's vision budget is used up."""
+    limit = get_config().vision_max_calls
+    return limit > 0 and _run_budget().calls >= limit
+
+
+def _reserve_call(path: str) -> None:
+    """Count one vision API call, or defer the file when the run's budget is spent."""
+    limit = get_config().vision_max_calls
+    budget = _run_budget()
+    with budget.lock:
+        if limit > 0 and budget.calls >= limit:
+            raise VisionDeferredError(path, limit)
+        budget.calls += 1
+
+
+def _cache_conn() -> sqlite3.Connection | None:
+    """This thread's own connection to the caption cache, or None for :memory:.
+
+    Extraction runs on worker threads, which cannot share the main thread's
+    connection; cache lookups are single-row reads and writes, so each
+    worker keeps its own.
+    """
+    db_path = get_config().db_path
+    if db_path == ":memory:":
+        return None
+    if getattr(_cache_local, "path", None) != db_path:
+        _cache_local.conn = sqlite3.connect(db_path, timeout=30)
+        _cache_local.path = db_path
+    conn: sqlite3.Connection = _cache_local.conn
+    return conn
+
+
+def caption_cached(path: Path, file_type: str, checksum: str | None) -> str:
+    """Caption a file, reusing the caption of any file with the same content.
+
+    Captions are keyed by SHA-256, so a renamed or copied photo costs no API
+    call. A new caption is saved as soon as it arrives, even if storing the
+    file fails later, so a retry does not pay for it twice. Workers holding
+    the same content wait on one lock stripe, so duplicates in one batch are
+    captioned once.
+    """
+    backend = get_backend()
+    if backend is None:
+        raise ExtractionError(str(path), "No vision backend configured")
+    conn = _cache_conn() if checksum else None
+    if conn is None:
+        _reserve_call(str(path))
+        return backend.caption(path, file_type)
+    model = get_config().vision_model
+    with _CAPTION_LOCKS[hash(checksum) % len(_CAPTION_LOCKS)]:
+        # A caption from another model is not reused: changing
+        # TROVE_VISION_MODEL re-captions files as they are re-indexed.
+        row = conn.execute(
+            "SELECT caption FROM captions WHERE sha256 = ? AND model = ?", (checksum, model)
+        ).fetchone()
+        if row:
+            return str(row[0])
+        _reserve_call(str(path))
+        caption = backend.caption(path, file_type)
+        conn.execute(
+            "INSERT OR REPLACE INTO captions (sha256, model, caption) VALUES (?, ?, ?)",
+            (checksum, model, caption),
+        )
+        conn.commit()
+    return caption
 
 
 def _get_mime(path: Path) -> str:
