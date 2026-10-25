@@ -48,7 +48,11 @@ def _rows_text(title: str, rows: Iterable[Iterable[Any]]) -> str:
     """A sheet as a heading and up to SHEET_MAX_ROWS tab-separated, non-empty rows."""
     lines = [f"[Sheet] {title}"]
     for row in rows:
-        cells = [text for value in row if value is not None and (text := _cell_text(value))]
+        # Blank cells keep their place, so a value stays in its column;
+        # blanks after the last value in a row are dropped.
+        cells = ["" if value is None else _cell_text(value) for value in row]
+        while cells and not cells[-1]:
+            cells.pop()
         if cells:
             lines.append("\t".join(cells))
             if len(lines) > SHEET_MAX_ROWS:

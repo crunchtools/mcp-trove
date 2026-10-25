@@ -59,6 +59,15 @@ class TestReaders:
         assert len(lines) == 1 + documents.SHEET_MAX_ROWS
         assert lines[-1] == f"row {documents.SHEET_MAX_ROWS}\t{documents.SHEET_MAX_ROWS}"
 
+    def test_blank_cells_keep_columns_aligned(self, tmp_path: Path) -> None:
+        import openpyxl
+
+        workbook = openpyxl.Workbook()
+        workbook.active.append(["A", None, "C", None, None])
+        workbook.save(tmp_path / "gaps.xlsx")
+
+        assert extract_text(tmp_path / "gaps.xlsx").splitlines()[1] == "A\t\tC"
+
     def test_csv_keeps_its_leading_lines(self, tmp_path: Path) -> None:
         (tmp_path / "big.csv").write_text("".join(f"{n},x\n" for n in range(500)))
 
@@ -170,6 +179,26 @@ class TestNameEntries:
 
         assert [r["status"] for r in results] == ["indexed"]
         assert db.query_one("SELECT file_type FROM files") == {"file_type": "text"}
+
+    async def test_leaving_a_name_entry_hashes_the_content(
+        self,
+        tmp_path: Path,
+        in_memory_db: sqlite3.Connection,
+        name_mode: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Unchanged size and mtime must not carry the stand-in checksum over."""
+        (tmp_path / "page.html").write_text("<p>Valvoline</p>")
+        await index_path_async(tmp_path)
+        config = get_config()
+        monkeypatch.setattr(config, "index_types", config.index_types | {"web"})
+
+        await index_path_async(tmp_path)
+
+        row = db.query_one("SELECT checksum FROM files")
+        assert row is not None
+        assert not row["checksum"].startswith("name:")
+        assert len(row["checksum"]) == 64
 
     async def test_own_database_is_not_indexed(
         self, tmp_path: Path, name_mode: None, monkeypatch: pytest.MonkeyPatch

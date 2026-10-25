@@ -31,6 +31,7 @@ HASH_BUFFER_SIZE = 65536
 # A directory whose file count falls below this share of its last completed
 # run is treated as a broken source (empty or half-mounted), not mass deletion.
 MIN_FOUND_RATIO = 0.5
+NAME_CHECKSUM_PREFIX = "name:"  # marks a stand-in checksum: the file was never read
 MIN_FOUND_BASELINE = 100  # smaller trees are too noisy to judge
 EMBED_BATCH_SIZE = 256  # chunks embedded per call, matching fastembed's default batch
 
@@ -288,7 +289,7 @@ def _current(existing: dict[str, Any], checksum: str, path: Path, file_size: int
 
 def name_checksum(file_size: int, mtime: float) -> str:
     """The checksum recorded for a name-only entry, whose bytes are never read."""
-    return f"name:{file_size}:{int(mtime)}"
+    return f"{NAME_CHECKSUM_PREFIX}{file_size}:{int(mtime)}"
 
 
 def _extract_one(
@@ -320,7 +321,8 @@ def _extract_one(
         )
     if file_type == NAME_KIND:
         checksum = name_checksum(file_size, stat.st_mtime)
-    elif not checksum:
+    elif not checksum or checksum.startswith(NAME_CHECKSUM_PREFIX):
+        # A file leaving its name-only entry has never been hashed.
         checksum = compute_checksum(resolved)
     text = extract_text(resolved, checksum, file_type)
     config = get_config()

@@ -71,6 +71,10 @@ def extract_text(path: Path, checksum: str | None = None, file_type: str | None 
 
     checksum, the file's SHA-256, lets vision captions be reused across files
     with the same content; without it every caption is a new API call.
+    file_type, the extractor kind from classify(), is passed by the indexer,
+    which has already classified the file with its size: a file too big to
+    read is then given its name-only entry rather than read. Omitted, it is
+    detected from the extension alone.
     """
     file_type = file_type or detect_file_type(path)
 
