@@ -18,7 +18,6 @@ DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 DEFAULT_CHUNK_SIZE = 1000
 DEFAULT_CHUNK_OVERLAP = 200
 DEFAULT_INDEX_WORKERS = 20
-DEFAULT_INDEX_BATCH = 50
 DEFAULT_VISION_TIMEOUT = 120  # seconds per vision API call
 DEFAULT_PDF_MAX_PAGES = 5  # leading PDF pages indexed; 0 or negative = all
 DEFAULT_MAX_TEXT_CHARS = 5_000_000  # extracted text kept per file (~6k chunks)
@@ -54,7 +53,6 @@ class Config:
         self.index_workers: int = int(
             os.environ.get("TROVE_INDEX_WORKERS", str(DEFAULT_INDEX_WORKERS))
         )
-        self.index_batch: int = int(os.environ.get("TROVE_INDEX_BATCH", str(DEFAULT_INDEX_BATCH)))
         self.embedding_model: str = os.environ.get("TROVE_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
         self.exclude_patterns: list[str] = _parse_exclude(
             os.environ.get("TROVE_EXCLUDE_PATTERNS", DEFAULT_EXCLUDE_PATTERNS)

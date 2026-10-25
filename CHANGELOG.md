@@ -10,6 +10,21 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-25
+
+The interface is now stable under SemVer: MCP tool names, parameters and
+result fields, the command-line flags, every `TROVE_*` variable and the
+database schema (see Stability in the README).
+
+### Added
+
+- docs/runbook.md: monitoring states, restoring a backup, changing the embedding
+  model, measuring search and everyday changes.
+
+### Removed
+
+- `TROVE_INDEX_BATCH`, unused since 0.12.0.
+
 ## [0.16.0] - 2026-10-25
 
 ### Added

@@ -43,7 +43,7 @@ claude mcp add mcp-trove-crunchtools -- uvx mcp-trove-crunchtools
 
 | Tool | Description |
 |------|-------------|
-| `trove_search` | Hybrid semantic + FTS5 search. Returns ranked chunks with file paths, scores, and content. |
+| `trove_search` | Hybrid search: vector similarity, keywords (bm25) and folder/file names, fused by rank. One result per file, its best chunk, with `score`, `sources` and `matches`. `path` scopes it to a path prefix. |
 | `trove_similar` | Find files similar to a given indexed file using its average embedding. |
 
 ### Index Management (3)
@@ -72,7 +72,6 @@ claude mcp add mcp-trove-crunchtools -- uvx mcp-trove-crunchtools
 | `TROVE_PATHS` | (none) | Directories to index in background mode, separated by `:` (`;` on Windows) |
 | `TROVE_INBOX_PATHS` | (none) | Index paths that empty out by design (an upload inbox), separated like `TROVE_PATHS`; the shrink and removal guards skip them |
 | `TROVE_INDEX_WORKERS` | `20` | Images and videos extracted at once. PDFs run one at a time and text files two, whatever this is set to |
-| `TROVE_INDEX_BATCH` | `50` | Unused since 0.12.0, when files began streaming through extraction instead of in batches; still accepted |
 | `TROVE_MANIFEST_DIR` | (none) | Directory of per-path file listings the host writes before a run (see Background Indexing); unset, each run walks its trees |
 | `TROVE_EMBED_THREADS` | `2` | ONNX threads for embedding |
 | `TROVE_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | fastembed model name |
@@ -135,12 +134,32 @@ An `--index` run is built to be left alone:
 
 - Each file is stored in one transaction, so a run killed part way (OOM, reboot) leaves no half-indexed file behind.
 - Before indexing, it runs `PRAGMA quick_check`, keeps a daily backup, marks runs abandoned for more than 12 hours as `aborted`, and probes `TROVE_REQUIRE_MOUNT`.
-- A path aborts instead of indexing when its file count falls below half of its last completed run (an unmounted source looks like deleted files), or when extractions keep timing out (a hung source). `trove_reindex` on the path overrides the file-count check.
+- A path aborts instead of indexing when it lists fewer than half the files indexed under it (an unmounted source looks like deleted files), or when extractions keep timing out (a hung source). `trove_reindex` on the path overrides the file-count check; paths in `TROVE_INBOX_PATHS` are exempt.
 - The exit code is `0` only when every path completed with no more than 10% of its files failing. Any other outcome exits `1`, so the systemd unit fails visibly. `TROVE_STATUS_FILE` records what happened, path by path.
 - The database records its embedding model and refuses to open under a different one, because vectors from two models cannot be searched together.
-- Vision captions are cached by file content (SHA-256) and vision model, so a renamed or copied photo reuses its caption. A cached caption is kept while its content is indexed and for 90 days after. A file that failed permanently, or 5 times transiently, is not retried until it changes; `trove_reindex` on its path retries it.
+- Vision captions are cached by file content (SHA-256; a fingerprint of size and three 1 MB spans for video and audio) and vision model, so a renamed or copied photo reuses its caption. A cached caption is kept while its content is indexed and for 90 days after. A file that failed permanently, or 5 times transiently, is not retried until it changes; `trove_reindex` on its path retries it.
 - With `TROVE_VISION_PDF_SCANS=true`, a PDF whose first 5 pages hold under 20 characters of text (a scan) has its first page captioned through the vision backend, under the same budget and cache. It is off by default because it sends an image of the page to the vision provider.
 - `trove_reindex` with no path re-reads every file, so it requires `force=true`. Cached captions are reused unless `TROVE_VISION_MODEL` changed.
+
+## Operator commands
+
+| Command | What it does |
+|---------|--------------|
+| `mcp-trove-crunchtools --index` | Index `TROVE_PATHS` once and exit, for a systemd timer |
+| `mcp-trove-crunchtools --reembed` | Rebuild every vector under `TROVE_EMBEDDING_MODEL` from the stored chunks: resumable, swapped in one transaction, nothing re-read |
+| `mcp-trove-crunchtools --eval queries.json` | Recall@5 and MRR over `[{"query": ..., "expect": [path fragment, ...]}]` |
+
+[docs/runbook.md](docs/runbook.md) covers monitoring states, restoring a backup, changing
+the embedding model and everyday changes.
+
+## Stability
+
+From 1.0.0 these are a stable interface under [SemVer](https://semver.org/):
+the MCP tool names, their parameters and result fields; the command-line
+flags above; every `TROVE_*` variable in the table; and the database, whose
+schema changes only through numbered migrations that run on open
+(`PRAGMA user_version`). Removing or renaming any of them, or a migration
+that cannot be applied in place, is a major release. Adding is a minor one.
 
 ## License
 
