@@ -55,7 +55,9 @@ CATEGORIES: dict[str, frozenset[str]] = {
     ),
 }
 
-DEFAULT_INDEX_TYPES = "images,videos,audio,pdf,text,documents,spreadsheets,presentations"
+# audio is opt-in: indexing it sends clips of the sound, which may be private
+# speech, to the vision provider.
+DEFAULT_INDEX_TYPES = "images,videos,pdf,text,documents,spreadsheets,presentations"
 INDEX_OTHER_MODES = frozenset({"skip", "name"})
 
 # The extractor for each extension; any other categorised extension is read

@@ -21,10 +21,11 @@ reconstructed from their commit ranges in RT #1485.
   costs one call and a few ranged reads. Duration, recording time, phone GPS
   and audio tags are indexed alongside the caption. Videos over 20 MB, which
   always failed before, are retried once (migration 3).
-- An `audio` category (mp3, m4a, wav, flac, ogg, aac, wma, opus), on by
-  default, and more video extensions (m4v, mpg, mpeg, 3gp, wmv).
-- `TROVE_INDEX_LOCATION` (default `true`): set `false` to leave the GPS of
-  photos and videos out of the index.
+- An `audio` category (mp3, m4a, wav, flac, ogg, aac, wma, opus), opt-in
+  because it sends sound clips to the vision provider, and more video
+  extensions (m4v, mpg, mpeg, 3gp, wmv).
+- `TROVE_INDEX_LOCATION` (default `false`): index the GPS of photos and
+  videos. Photo GPS was always indexed before; set this to keep it.
 - `--reembed`: rebuilds every vector from the stored chunks under
   `TROVE_EMBEDDING_MODEL`, resumable, with an atomic swap; nothing is
   re-extracted or re-captioned.

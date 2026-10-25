@@ -103,7 +103,10 @@ def _request_content(client: MagicMock) -> list[dict[str, Any]]:
 
 
 class TestSampling:
-    def test_frames_audio_and_metadata(self, tmp_path: Path) -> None:
+    def test_frames_audio_and_metadata(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(get_config(), "index_location", True)
         sample = media.sample(_make_clip(tmp_path / "clip.mp4"))
 
         assert len(sample.frames) == media.FRAME_COUNT
@@ -129,11 +132,7 @@ class TestSampling:
 
         assert np.sqrt(np.mean(first.astype(np.float64) ** 2)) > 0.05
 
-    def test_location_can_be_left_out(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(get_config(), "index_location", False)
-
+    def test_location_is_opt_in(self, tmp_path: Path) -> None:
         assert media.probe(_make_clip(tmp_path / "clip.mp4", 5)).location is None
 
     def test_silent_video_has_no_clip(self, tmp_path: Path) -> None:
@@ -160,6 +159,12 @@ class TestSampling:
         assert media.fingerprint(clip).startswith("fp:")
 
 
+class TestDefaults:
+    def test_audio_is_opt_in(self, tmp_path: Path) -> None:
+        with patch.object(vision, "get_backend", return_value=MagicMock()):
+            assert classify(tmp_path / "voice memo.m4a") is None
+
+
 class TestCaptioning:
     def test_one_request_carries_frames_and_sound(
         self, tmp_path: Path, openrouter: MagicMock
@@ -173,7 +178,11 @@ class TestCaptioning:
         assert "[Caption] A person training in a basement gym." in text
         assert vision.calls_made() == 1
 
-    def test_audio_file_sends_only_sound(self, tmp_path: Path, openrouter: MagicMock) -> None:
+    def test_audio_file_sends_only_sound(
+        self, tmp_path: Path, openrouter: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config = get_config()
+        monkeypatch.setattr(config, "index_types", config.index_types | {"audio"})
         extract_text(_make_clip(tmp_path / "song.mp3", picture=False), "fp:abc")
 
         kinds = [part["type"] for part in _request_content(openrouter)]
