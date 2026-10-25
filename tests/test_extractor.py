@@ -257,3 +257,23 @@ class TestPdfStoreRelease:
             extract_text(pdf_path)
 
         shrink.assert_called_once_with(100)
+
+
+class TestLockedPdf:
+    def test_password_protected_pdf_says_so(self, tmp_path: Path) -> None:
+        """pymupdf4llm reported a locked PDF as "'NoneType' object is not subscriptable"."""
+        import pymupdf
+
+        pdf_path = tmp_path / "locked.pdf"
+        doc = pymupdf.open()
+        doc.new_page().insert_text((72, 72), "secret")
+        doc.save(
+            str(pdf_path),
+            encryption=pymupdf.PDF_ENCRYPT_AES_256,
+            user_pw="user",
+            owner_pw="owner",
+        )
+        doc.close()
+
+        with pytest.raises(ExtractionError, match="password-protected"):
+            extract_text(pdf_path)

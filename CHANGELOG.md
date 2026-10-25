@@ -10,6 +10,13 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-10-25
+
+### Fixed
+
+- A password-protected PDF fails with "PDF is password-protected" instead
+  of pymupdf4llm's "'NoneType' object is not subscriptable" (#81).
+
 ## [0.14.0] - 2026-10-25
 
 ### Changed
