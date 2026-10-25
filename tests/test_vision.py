@@ -355,6 +355,18 @@ class TestOpenRouterBackend:
         sent = Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1])))
         assert max(sent.size) == OVERSIZE_IMAGE_SIDE
 
+    def test_oversized_corrupt_image_is_an_extraction_error(self, tmp_path: Path) -> None:
+        img = tmp_path / "broken.jpg"
+        with img.open("wb") as f:
+            f.write(b"\xff\xd8\xff\xe0 not really a jpeg")
+            f.truncate(OPENROUTER_MAX_MEDIA_BYTES + 1)
+        backend = OpenRouterBackend("google/gemini-3.1-flash-lite", "describe this")
+        backend._client = MagicMock()
+
+        with pytest.raises(ExtractionError, match="cannot downscale"):
+            backend.caption(img, "image")
+        backend._client.chat.completions.create.assert_not_called()
+
     def test_unreadable_key_file(self, tmp_path: Path) -> None:
         backend = OpenRouterBackend("google/gemini-3.1-flash-lite", "describe this")
         with (
