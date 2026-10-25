@@ -99,6 +99,8 @@ def _check_unchanged(
 
     Uses mtime+size as a fast pre-filter: if both match the DB record,
     the file is assumed unchanged and the expensive SHA-256 is skipped.
+    A file with no record needs no checksum to decide, so its checksum is
+    returned empty and computed by the extract worker instead.
     Returns (checksum, file_size, mtime, existing_record).
     """
     resolved = path.resolve()
@@ -110,6 +112,11 @@ def _check_unchanged(
         "SELECT id, checksum, file_size, mtime FROM files WHERE path = ?",
         (str(resolved),),
     )
+
+    # New file: hashing here would read every new file serially before any
+    # extraction starts, which over a network mount took hours (RT #1542).
+    if existing is None:
+        return "", file_size, mtime, None
 
     # Fast path: mtime+size match → skip checksum
     if (
@@ -137,6 +144,8 @@ def _extract_one(
     Called from worker threads — no DB access here.
     """
     resolved = path.resolve()
+    if not checksum:
+        checksum = compute_checksum(resolved)
     text = extract_text(resolved)
     file_type = detect_file_type(resolved)
     config = get_config()

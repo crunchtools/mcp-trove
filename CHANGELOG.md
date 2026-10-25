@@ -10,6 +10,15 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-10-24
+
+### Changed
+
+- A file with no index record is checksummed by the parallel extract worker,
+  not by the serial scan before extraction. Over the pCloud mount that scan
+  read every new file one at a time and took hours before the first file was
+  stored (RT #1542).
+
 ## [0.9.2] - 2026-10-24
 
 ### Fixed

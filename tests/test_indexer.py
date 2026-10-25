@@ -14,6 +14,7 @@ from mcp_trove_crunchtools import indexer as indexer_mod
 from mcp_trove_crunchtools.indexer import (
     MAX_FILE_SIZE,
     _extract_one,
+    _partition_unchanged,
     _store_one,
     chunk_text,
     compute_checksum,
@@ -205,3 +206,53 @@ class TestLargeFileBounds:
         assert batch_sizes == [2, 2, 1]
         rows = db.query("SELECT chunk_index, content FROM chunks ORDER BY chunk_index")
         assert [(r["chunk_index"], r["content"]) for r in rows] == list(enumerate(chunks))
+
+
+class TestDeferredChecksum:
+    """A new file is hashed by the extract worker, not by the serial scan
+    before extraction; over a network mount that scan took hours (RT #1542)."""
+
+    def test_new_file_not_hashed_during_partition(
+        self, tmp_path: Path, in_memory_db: sqlite3.Connection
+    ) -> None:
+        new_file = tmp_path / "new.txt"
+        new_file.write_text("brand new")
+
+        with patch.object(indexer_mod, "compute_checksum") as checksum:
+            skipped, to_extract = _partition_unchanged([new_file], force=False)
+
+        checksum.assert_not_called()
+        assert skipped == []
+        assert [item[1] for item in to_extract] == [""]
+
+    def test_changed_file_still_hashed_during_partition(
+        self, tmp_path: Path, in_memory_db: sqlite3.Connection
+    ) -> None:
+        known = tmp_path / "known.txt"
+        known.write_text("same content")
+        db.insert_file(str(known.resolve()), compute_checksum(known), "text", 1, 0.0)
+
+        skipped, to_extract = _partition_unchanged([known], force=False)
+
+        assert to_extract == []
+        assert skipped[0]["reason"] == "unchanged"
+
+    def test_extract_one_computes_deferred_checksum(self, tmp_path: Path) -> None:
+        new_file = tmp_path / "new.txt"
+        new_file.write_text("brand new")
+
+        extraction = _extract_one(new_file, "", new_file.stat().st_size, None)
+
+        assert extraction["checksum"] == compute_checksum(new_file)
+
+    def test_indexed_new_file_stores_real_checksum(
+        self, tmp_path: Path, in_memory_db: sqlite3.Connection
+    ) -> None:
+        new_file = tmp_path / "new.txt"
+        new_file.write_text("brand new")
+
+        indexer_mod.index_path(tmp_path)
+
+        row = db.query_one("SELECT checksum FROM files WHERE path = ?", (str(new_file.resolve()),))
+        assert row is not None
+        assert row["checksum"] == compute_checksum(new_file)
