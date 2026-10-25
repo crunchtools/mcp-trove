@@ -66,6 +66,7 @@ def run_index() -> int:
         code = _report(summary, f"run failed: {exc}")
 
     summary["vision_calls"] = vision.calls_made()
+    summary["vision_budget"] = config.vision_max_calls
     summary["finished_at"] = _now()
     summary["duration_seconds"] = round(time.monotonic() - started)
     if code:
@@ -102,6 +103,7 @@ def _preflight(summary: dict[str, Any]) -> int | None:
     backup_problem = _backup(config.db_path, config.backup_dir, config.backup_keep)
     if backup_problem:
         _report(summary, backup_problem)
+    summary["latest_backup"] = _latest_backup(config.backup_dir)
     pruned = db.prune_captions()
     if pruned:
         print(f"Pruned {pruned} cached captions no longer in the index")
@@ -231,6 +233,20 @@ def _backup(db_path: str, backup_dir: str, keep: int) -> str | None:
     return None
 
 
+def _latest_backup(backup_dir: str) -> dict[str, str] | None:
+    """Name and time of the newest backup, for monitoring that cannot list it.
+
+    The backup directory is owner-only; the summary is how a monitor without
+    access learns whether backups are still being taken.
+    """
+    backups = sorted(Path(backup_dir).glob("trove-*.db"))
+    if not backups:
+        return None
+    newest = backups[-1]
+    taken = datetime.fromtimestamp(newest.stat().st_mtime, UTC)
+    return {"file": newest.name, "created_at": taken.isoformat(timespec="seconds")}
+
+
 def _write_summary(status_file: str, summary: dict[str, Any]) -> bool:
     """Write the run summary that monitoring reads, replacing it atomically.
 
@@ -244,6 +260,7 @@ def _write_summary(status_file: str, summary: dict[str, Any]) -> bool:
         fd, partial = tempfile.mkstemp(dir=target.parent, prefix=".last_run.")
         with os.fdopen(fd, "w") as out:
             out.write(json.dumps(summary, indent=2) + "\n")
+        Path(partial).chmod(get_config().status_file_mode)
         Path(partial).replace(target)
     except OSError as exc:
         print(f"Cannot write {target}: {exc}", file=sys.stderr)

@@ -73,6 +73,9 @@ class Config:
         self.backup_dir: str = os.environ.get("TROVE_BACKUP_DIR", str(db_dir / "backups"))
         self.backup_keep: int = int(os.environ.get("TROVE_BACKUP_KEEP", str(DEFAULT_BACKUP_KEEP)))
         self.status_file: str = os.environ.get("TROVE_STATUS_FILE", str(db_dir / "last_run.json"))
+        # Owner-only unless a monitor running as another user needs it: the
+        # summary can carry error text that names files.
+        self.status_file_mode: int = int(os.environ.get("TROVE_STATUS_FILE_MODE", "600"), 8)
         self.vision_backend: str = os.environ.get("TROVE_VISION_BACKEND", "none").lower()
         self.vision_model: str = os.environ.get("TROVE_VISION_MODEL", self._default_vision_model())
         self.vision_prompt: str = os.environ.get("TROVE_VISION_PROMPT", DEFAULT_VISION_PROMPT)

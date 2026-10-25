@@ -86,6 +86,7 @@ claude mcp add mcp-trove-crunchtools -- uvx mcp-trove-crunchtools
 | `TROVE_BACKUP_DIR` | `<db dir>/backups` | Where `--index` keeps a daily `VACUUM INTO` copy of the database |
 | `TROVE_BACKUP_KEEP` | `3` | Daily database copies kept; `0` disables backups |
 | `TROVE_STATUS_FILE` | `<db dir>/last_run.json` | Summary of the last `--index` run, for monitoring |
+| `TROVE_STATUS_FILE_MODE` | `600` | Octal file mode of the summary. Use `644` when a monitor reads it as another user; it can carry error text that names files |
 | `TROVE_VISION_BACKEND` | `none` | Vision captioning backend: `gemini`, `openai`, `openrouter`, `ollama`, or `none` to disable |
 | `TROVE_VISION_MODEL` | per backend | Vision model. Defaults to `gemini-2.5-flash`, `gpt-4o-mini`, `google/gemini-3.1-flash-lite` (openrouter) or `llava` depending on the backend; empty when disabled |
 | `TROVE_VISION_PROMPT` | (see below) | Caption prompt sent with each image |

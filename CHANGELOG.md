@@ -10,6 +10,15 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-10-25
+
+### Changed
+
+- `TROVE_STATUS_FILE_MODE` (octal, default `600`) sets the mode of
+  `last_run.json`, so a monitor running as another user can be let in (`644`).
+  The summary records `vision_budget` and `latest_backup` (name and time),
+  since the backup directory is owner-only.
+
 ## [0.11.0] - 2026-10-25
 
 ### Added
