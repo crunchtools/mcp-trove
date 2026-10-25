@@ -20,8 +20,26 @@ class TestDetectFileType:
     def test_markdown_file(self) -> None:
         assert detect_file_type(Path("test.md")) == "markdown"
 
-    def test_python_file(self) -> None:
+    def test_python_file_when_code_is_on(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(get_config(), "index_types", frozenset({"code"}))
         assert detect_file_type(Path("test.py")) == "text"
+
+    @pytest.mark.parametrize(
+        ("name", "kind"),
+        [
+            ("old.doc", "doc"),
+            ("letter.odt", "odf"),
+            ("deck.odp", "odf"),
+            ("budget.ods", "odf"),
+            ("notes.rtf", "rtf"),
+            ("budget.xlsx", "xlsx"),
+            ("budget.xls", "xls"),
+            ("export.csv", "table"),
+            ("deck.pptx", "pptx"),
+        ],
+    )
+    def test_document_kinds(self, name: str, kind: str) -> None:
+        assert detect_file_type(Path(name)) == kind
 
     def test_pdf_file(self) -> None:
         assert detect_file_type(Path("test.pdf")) == "pdf"
@@ -29,6 +47,7 @@ class TestDetectFileType:
     def test_docx_file(self) -> None:
         assert detect_file_type(Path("test.docx")) == "docx"
 
+    @patch("mcp_trove_crunchtools.vision.get_backend", MagicMock())
     def test_image_file(self) -> None:
         assert detect_file_type(Path("photo.jpg")) == "image"
         assert detect_file_type(Path("photo.jpeg")) == "image"
@@ -37,6 +56,7 @@ class TestDetectFileType:
         assert detect_file_type(Path("photo.webp")) == "image"
         assert detect_file_type(Path("photo.heic")) == "image"
 
+    @patch("mcp_trove_crunchtools.vision.get_backend", MagicMock())
     def test_video_file(self) -> None:
         assert detect_file_type(Path("clip.mp4")) == "video"
         assert detect_file_type(Path("clip.mov")) == "video"
@@ -59,15 +79,21 @@ class TestIsSupported:
         assert is_supported(Path("test.md"))
         assert is_supported(Path("test.pdf"))
         assert is_supported(Path("test.docx"))
-        assert is_supported(Path("test.json"))
-        assert is_supported(Path("test.yaml"))
+        assert is_supported(Path("test.doc"))
+        assert is_supported(Path("test.odt"))
+        assert is_supported(Path("test.xlsx"))
+        assert is_supported(Path("test.pptx"))
+
+    @pytest.mark.parametrize("name", ["page.html", "data.json", "settings.yaml"])
+    def test_web_and_data_off_by_default(self, name: str) -> None:
+        assert not is_supported(Path(name))
 
     @pytest.mark.parametrize("name", ["main.c", "tool.py", "app.conf", "access.log", "local.env"])
     def test_source_code_skipped_by_default(self, name: str) -> None:
         assert not is_supported(Path(name))
 
     def test_source_code_indexed_when_asked(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(get_config(), "index_source_code", True)
+        monkeypatch.setattr(get_config(), "index_types", frozenset({"code"}))
         assert is_supported(Path("tool.py"))
         assert is_supported(Path("access.log"))
 
@@ -122,7 +148,8 @@ class TestExtractText:
         assert "Paragraph" in content
         Path(path).unlink()
 
-    def test_extract_python_source(self) -> None:
+    def test_extract_python_source(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(get_config(), "index_types", frozenset({"code"}))
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write('def hello():\n    print("Hello")\n')
             path = f.name
