@@ -25,6 +25,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _db: sqlite3.Connection | None = None
+# The file _db was opened on, which can differ from TROVE_DB (an explicit path).
+_db_path: str | None = None
 # Depth of the open transaction() block; while it is above zero, the helpers
 # below leave committing to the block.
 _tx_depth = 0
@@ -229,12 +231,13 @@ def _migrate_add_mtime(conn: sqlite3.Connection) -> None:
 
 def get_db(db_path: str | None = None) -> sqlite3.Connection:
     """Get or create the singleton database connection."""
-    global _db
+    global _db, _db_path
     if _db is None:
         path = db_path or get_config().db_path
         if path != ":memory:":
             get_config().ensure_db_dir()
         _db = sqlite3.connect(path)
+        _db_path = path
         _db.row_factory = sqlite3.Row
         _db.execute("PRAGMA journal_mode=WAL")
         # The MCP server and the nightly indexer write to the same file.
@@ -257,6 +260,11 @@ def get_db(db_path: str | None = None) -> sqlite3.Connection:
         _migrate(_db)
         _db.commit()
     return _db
+
+
+def opened_path() -> str | None:
+    """The database file the open connection uses, or None when none is open."""
+    return _db_path if _db is not None else None
 
 
 @contextmanager

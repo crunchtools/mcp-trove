@@ -11,20 +11,17 @@ import hashlib
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import sqlite_vec
 
 from . import database as db
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-
 from . import vision
 from .config import get_config
 from .embedder import embed_texts
 from .errors import IndexAbortedError, VisionDeferredError
 from .extractor import detect_file_type, extract_text, is_supported
+from .manifest import Entry, load_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +34,16 @@ MIN_FOUND_RATIO = 0.5
 MIN_FOUND_BASELINE = 100  # smaller trees are too noisy to judge
 EMBED_BATCH_SIZE = 256  # chunks embedded per call, matching fastembed's default batch
 
-_T = Any  # generic element type for _batched
-
-
-def _batched(iterable: list[_T], n: int) -> Iterator[list[_T]]:
-    """Yield successive n-sized chunks from a list."""
-    for i in range(0, len(iterable), n):
-        yield iterable[i : i + n]
+# mtimes from the storage API and from the mount can differ below a second.
+MTIME_TOLERANCE = 1.0
+# A big tree whose manifest lacks more than this share of its indexed files
+# aborts instead of dropping them: a listing cut short looks like deletion.
+MAX_REMOVED_RATIO = 0.10
+# Extractions run per type: PDFs are the memory-heavy ones, media wait on the
+# network and the vision API, so they get the worker count.
+TYPE_CONCURRENCY = {"pdf": 1, "docx": 2, "text": 2, "markdown": 2}
+PROGRESS_EVERY = 25  # stored files between progress updates
+TRIM_EVERY = 50  # stored files between returning freed memory to the OS
 
 
 def compute_checksum(path: Path) -> str:
@@ -59,7 +59,11 @@ def compute_checksum(path: Path) -> str:
 
 
 def chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
-    """Split text into overlapping chunks."""
+    """Split text into overlapping chunks, ending each at a natural break.
+
+    A chunk ends at the last paragraph break, else line break, else sentence
+    end, in its final 40%; only text with none is cut mid-word.
+    """
     if not text.strip():
         return []
 
@@ -68,15 +72,26 @@ def chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
     text_len = len(text)
 
     while start < text_len:
-        end = start + chunk_size
+        end = min(start + chunk_size, text_len)
+        if end < text_len:
+            end = _natural_break(text, start + int(chunk_size * 0.6), end)
         chunk = text[start:end]
         if chunk.strip():
             chunks.append(chunk)
         if end >= text_len:
             break
-        start = end - overlap
+        start = max(end - overlap, start + 1)
 
     return chunks
+
+
+def _natural_break(text: str, earliest: int, end: int) -> int:
+    """Index just after the best break in text[earliest:end], or end if none."""
+    for separator in ("\n\n", "\n", ". "):
+        found = text.rfind(separator, earliest, end)
+        if found != -1:
+            return found + len(separator)
+    return end
 
 
 def scan_directory(
@@ -110,8 +125,38 @@ def scan_directory(
     return sorted(found)
 
 
+def scan_source(directory: Path) -> tuple[list[Path], dict[Path, Entry] | None]:
+    """List the supported files under directory, with their stats when known.
+
+    From the directory's manifest when one is fresh (see manifest.py), which
+    costs no network round trips; otherwise a walk of the tree, and None.
+    """
+    entries = load_manifest(directory)
+    if entries is None:
+        return scan_directory(directory), None
+    patterns = get_config().exclude_patterns
+    kept = {
+        path: entry
+        for path, entry in entries.items()
+        if _wanted(path.relative_to(directory), entry.size, patterns)
+    }
+    return sorted(kept), kept
+
+
+def _wanted(relative: Path, size: int, patterns: list[str]) -> bool:
+    """The walk's filters, applied to a manifest entry."""
+    if any(part.startswith(".") for part in relative.parts):
+        return False
+    if size > MAX_FILE_SIZE:
+        return False
+    if any(fnmatch.fnmatch(relative.name, pat) for pat in patterns):
+        return False
+    return is_supported(relative)
+
+
 def _check_unchanged(
     path: Path,
+    stat: Entry | None = None,
 ) -> tuple[str, int, float, dict[str, Any] | None]:
     """Check if a file needs re-extraction (main thread, DB-safe).
 
@@ -119,12 +164,16 @@ def _check_unchanged(
     the file is assumed unchanged and the expensive SHA-256 is skipped.
     A file with no record needs no checksum to decide, so its checksum is
     returned empty and computed by the extract worker instead.
-    Returns (checksum, file_size, mtime, existing_record).
+    stat, from a manifest, saves resolving and stat'ing the path over the
+    mount. Returns (checksum, file_size, mtime, existing_record).
     """
-    resolved = path.resolve()
-    stat = resolved.stat()
-    file_size = stat.st_size
-    mtime = stat.st_mtime
+    if stat is None:
+        resolved = path.resolve()
+        file_stat = resolved.stat()
+        file_size, mtime = file_stat.st_size, file_stat.st_mtime
+    else:
+        resolved = path
+        file_size, mtime = stat.size, stat.mtime
 
     existing = db.query_one(
         "SELECT id, checksum, file_size, mtime FROM files WHERE path = ?",
@@ -140,7 +189,7 @@ def _check_unchanged(
     if (
         existing
         and existing["mtime"] is not None
-        and existing["mtime"] == mtime
+        and abs(existing["mtime"] - mtime) < MTIME_TOLERANCE
         and existing["file_size"] == file_size
     ):
         return existing["checksum"], file_size, mtime, existing
@@ -291,6 +340,8 @@ def index_file(path: Path, force: bool = False) -> dict[str, str | int]:
 def _partition_unchanged(
     files: list[Path],
     force: bool,
+    stats: dict[Path, Entry] | None = None,
+    root: Path | None = None,
 ) -> tuple[
     list[dict[str, str | int]],
     list[tuple[Path, str, int, int | None, float]],
@@ -300,14 +351,16 @@ def _partition_unchanged(
     to_extract: list[tuple[Path, str, int, int | None, float]] = []
     known = set() if force else db.known_failures()
     for fp in files:
-        checksum, file_size, mtime, existing = _check_unchanged(fp)
+        stat = stats.get(fp) if stats else None
+        checksum, file_size, mtime, existing = _check_unchanged(fp, stat)
+        shown = str(fp) if stat else str(fp.resolve())
         if existing and existing["checksum"] == checksum and not force:
             # Backfill mtime if DB has NULL so fast-skip works next run
             if existing["mtime"] is None:
                 db.update_file_mtime(existing["id"], mtime)
             skipped.append(
                 {
-                    "path": str(fp.resolve()),
+                    "path": shown,
                     "status": "skipped",
                     "reason": "unchanged",
                     "chunk_count": 0,
@@ -319,11 +372,19 @@ def _partition_unchanged(
             # the file changes or on trove_reindex.
             skipped.append(
                 {
-                    "path": str(fp.resolve()),
+                    "path": shown,
                     "status": "skipped",
                     "reason": "known_failure",
                     "chunk_count": 0,
                 }
+            )
+        elif stat and root and not fp.resolve().is_relative_to(root):
+            # A manifest path is not resolved during the scan (that is the
+            # round trip it saves), so one under a symlinked directory is
+            # caught here, before anything is read, as the walk would have.
+            logger.warning("Skipping %s: it resolves outside %s", fp, root)
+            skipped.append(
+                {"path": shown, "status": "skipped", "reason": "outside_root", "chunk_count": 0}
             )
         else:
             existing_id = existing["id"] if existing else None
@@ -331,128 +392,169 @@ def _partition_unchanged(
     return skipped, to_extract
 
 
-async def _extract_and_store_batched(
+async def _extract_and_store(
     to_extract: list[tuple[Path, str, int, int | None, float]],
     results: list[dict[str, str | int]],
     run_id: int | None = None,
 ) -> None:
-    """Extract files in batches, storing each batch before starting the next.
+    """Extract files concurrently and store each as soon as it is ready.
 
-    This bounds memory usage: only one batch of extracted text lives in memory
-    at a time, instead of accumulating all extractions via a single gather.
+    A bounded window of extractions is in flight; whichever finishes first is
+    stored, and the next file starts. Lockstep batches waited on their slowest
+    file. Concurrency is capped per file type (TYPE_CONCURRENCY), and the
+    window bounds how much extracted text is held at once.
     """
     config = get_config()
-    workers = config.index_workers
-    batch_size = config.index_batch
-    semaphore = asyncio.Semaphore(workers)
+    media_workers = max(1, config.index_workers)
+    limits = {file_type: asyncio.Semaphore(count) for file_type, count in TYPE_CONCURRENCY.items()}
+    media = asyncio.Semaphore(media_workers)
+    window = media_workers + sum(TYPE_CONCURRENCY.values())
     # Safety-net timeout: 3x the per-call vision timeout to allow for
     # EXIF extraction + file read + API call, but prevent infinite hangs.
     extract_timeout = config.vision_timeout * 3
+    hung = _HungReads(config.max_extract_timeouts)
+    stored = 0
 
-    timeouts = 0
-
-    async def extract_bounded(
-        file_path: Path,
-        cs: str,
-        fs: int,
-        eid: int | None,
-        mt: float,
-    ) -> dict[str, Any]:
-        async with semaphore:
-            async with asyncio.timeout(extract_timeout):
-                return await asyncio.to_thread(
-                    _extract_one,
-                    file_path,
-                    cs,
-                    fs,
-                    eid,
-                    mt,
-                )
+    async def extract_bounded(item: tuple[Path, str, int, int | None, float]) -> dict[str, Any]:
+        async with limits.get(detect_file_type(item[0]), media), asyncio.timeout(extract_timeout):
+            return await asyncio.to_thread(_extract_one, *item)
 
     logger.info(
-        "Extracting %d files with %d workers in batches of %d",
+        "Extracting %d files, up to %d at once (%d media)",
         len(to_extract),
-        workers,
-        batch_size,
+        window,
+        media_workers,
+    )
+    queue = iter(to_extract)
+    in_flight: dict[asyncio.Task[dict[str, Any]], tuple[Path, str, int, int | None, float]] = {}
+    try:
+        while True:
+            while len(in_flight) < window and (item := next(queue, None)) is not None:
+                in_flight[asyncio.create_task(extract_bounded(item))] = item
+            if not in_flight:
+                break
+            done, _ = await asyncio.wait(in_flight, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                results.append(_settle(task, in_flight.pop(task), run_id, hung))
+                stored += 1
+                if stored % PROGRESS_EVERY == 0:
+                    _update_progress(run_id, results)
+                if stored % TRIM_EVERY == 0:
+                    _release_memory()
+    finally:
+        for task in in_flight:
+            task.cancel()
+    _update_progress(run_id, results)
+
+
+class _HungReads:
+    """Counts timed-out extractions and aborts the run past a limit.
+
+    A timed-out extraction's thread cannot be cancelled and keeps its read
+    open; past a few of them the source is hung (a wedged FUSE mount), and
+    carrying on would pile up stuck threads (RT #1542).
+    """
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self.count = 0
+
+    def saw_timeout(self, path: Path) -> None:
+        self.count += 1
+        if self.count >= self.limit:
+            raise IndexAbortedError(
+                str(path.parent), f"{self.count} extractions timed out; the source looks hung"
+            )
+
+
+def _settle(
+    task: asyncio.Task[dict[str, Any]],
+    item: tuple[Path, str, int, int | None, float],
+    run_id: int | None,
+    hung: _HungReads,
+) -> dict[str, str | int]:
+    """Store a finished extraction, or record why it failed."""
+    error = task.exception()
+    if error is None:
+        return _store_one(task.result())
+    result = _record_failure(item, error, run_id)
+    if isinstance(error, TimeoutError):
+        hung.saw_timeout(item[0])
+    return result
+
+
+def _record_failure(
+    item: tuple[Path, str, int, int | None, float],
+    error: BaseException,
+    run_id: int | None,
+) -> dict[str, str | int]:
+    """The result for a file that could not be extracted, logged unless deferred."""
+    path = str(item[0])
+    if isinstance(error, VisionDeferredError):
+        return {
+            "path": path,
+            "status": "deferred",
+            "reason": "vision budget spent",
+            "chunk_count": 0,
+        }
+    message = str(error)
+    logger.warning("Failed to extract %s: %s", path, message)
+    db.insert_error(run_id, path, message, db.classify_error(message), (item[2], item[4]))
+    return {"path": path, "status": "error", "reason": message, "chunk_count": 0}
+
+
+def _update_progress(run_id: int | None, results: list[dict[str, str | int]]) -> None:
+    if run_id is None:
+        return
+    db.update_run_progress(
+        run_id,
+        files_indexed=sum(1 for r in results if r["status"] == "indexed"),
+        files_skipped=sum(1 for r in results if r["status"] == "skipped"),
+        files_errored=sum(1 for r in results if r["status"] == "error"),
+        total_chunks=sum(int(r.get("chunk_count", 0)) for r in results),
     )
 
-    for batch_num, chunk in enumerate(_batched(to_extract, batch_size)):
-        logger.info(
-            "Batch %d: extracting %d files",
-            batch_num + 1,
-            len(chunk),
+
+def _release_memory() -> None:
+    """Return freed heap to the OS between files.
+
+    CPython's pymalloc keeps freed pages; gc.collect() breaks cycles, then
+    malloc_trim returns free heap pages to the OS.
+    """
+    gc.collect()
+    with contextlib.suppress(OSError):
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+
+
+def _remove_missing(directory: Path, present: set[Path]) -> list[dict[str, str | int]]:
+    """Drop index entries under directory that its manifest no longer lists.
+
+    Only with a manifest: a walk that fails part way cannot be told from
+    deletion. A tree of MIN_FOUND_BASELINE or more indexed files that would
+    lose over MAX_REMOVED_RATIO of them aborts instead, as a listing cut short.
+    """
+    # A range on path, so the files index serves it: every path that starts
+    # with the prefix sorts at or after it and before the prefix with its "/"
+    # replaced by "0", the next character. The root's prefix is just "/".
+    prefix = f"{str(directory).rstrip('/')}/"
+    rows = db.query(
+        "SELECT id, path FROM files WHERE path >= ? AND path < ?",
+        (prefix, f"{prefix[:-1]}0"),
+    )
+    gone = [row for row in rows if Path(row["path"]) not in present]
+    if len(rows) >= MIN_FOUND_BASELINE and len(gone) > len(rows) * MAX_REMOVED_RATIO:
+        msg = (
+            f"the manifest lacks {len(gone)} of {len(rows)} indexed files, over "
+            f"{MAX_REMOVED_RATIO:.0%}; it may be incomplete. Remove them with "
+            "trove_remove if they really were deleted."
         )
-        extractions = await asyncio.gather(
-            *(extract_bounded(fp, cs, fs, eid, mt) for fp, cs, fs, eid, mt in chunk),
-            return_exceptions=True,
-        )
-
-        # Store this batch immediately, then free extraction data
-        for idx, raw in enumerate(extractions):
-            if isinstance(raw, VisionDeferredError):
-                results.append(
-                    {
-                        "path": str(chunk[idx][0]),
-                        "status": "deferred",
-                        "reason": "vision budget spent",
-                        "chunk_count": 0,
-                    }
-                )
-                continue
-            if isinstance(raw, BaseException):
-                if isinstance(raw, TimeoutError):
-                    timeouts += 1
-                err_path = str(chunk[idx][0])
-                err_msg = str(raw)
-                logger.warning(
-                    "Failed to extract %s: %s",
-                    chunk[idx][0],
-                    raw,
-                )
-                db.insert_error(
-                    run_id,
-                    err_path,
-                    err_msg,
-                    db.classify_error(err_msg),
-                    (chunk[idx][2], chunk[idx][4]),
-                )
-                results.append(
-                    {
-                        "path": err_path,
-                        "status": "error",
-                        "reason": err_msg,
-                        "chunk_count": 0,
-                    }
-                )
-                continue
-            results.append(_store_one(raw))
-        del extractions
-
-        # A timed-out extraction's thread cannot be cancelled and keeps its
-        # read open; past a few of them the source is hung (a wedged FUSE
-        # mount), and carrying on would pile up stuck threads (RT #1542).
-        if timeouts >= config.max_extract_timeouts:
-            raise IndexAbortedError(
-                str(chunk[0][0].parent),
-                f"{timeouts} extractions timed out; the source looks hung",
-            )
-
-        # Update live progress after each batch
-        if run_id is not None:
-            db.update_run_progress(
-                run_id,
-                files_indexed=sum(1 for r in results if r["status"] == "indexed"),
-                files_skipped=sum(1 for r in results if r["status"] == "skipped"),
-                files_errored=sum(1 for r in results if r["status"] == "error"),
-                total_chunks=sum(int(r.get("chunk_count", 0)) for r in results),
-            )
-
-        # Force Python to release memory back to the OS.
-        # CPython's pymalloc keeps freed pages; gc.collect() breaks
-        # cycles, then malloc_trim returns free heap pages to the OS.
-        gc.collect()
-        with contextlib.suppress(OSError):
-            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        raise IndexAbortedError(str(directory), msg)
+    for row in gone:
+        db.delete_file_data(row["id"])
+    return [
+        {"path": row["path"], "status": "removed", "reason": "deleted", "chunk_count": 0}
+        for row in gone
+    ]
 
 
 async def index_path_async(
@@ -473,43 +575,25 @@ async def index_path_async(
     if not resolved.is_dir():
         return []
 
-    files = scan_directory(resolved)
+    files, stats = scan_source(resolved)
     if batch_limit is not None:
         files = files[:batch_limit]
     elif not force:
         _check_not_shrunk(resolved, len(files))
 
-    if not files:
+    if not files and stats is None:
         return []
 
     run_id = db.start_run(str(resolved), len(files))
     try:
-        results, to_extract = _partition_unchanged(files, force)
-
+        results, to_extract = _partition_unchanged(files, force, stats, resolved)
+        # Deletions are only trusted from a manifest covering the whole tree.
+        if stats is not None and batch_limit is None:
+            results.extend(_remove_missing(resolved, set(files)))
         # Record skipped count immediately so status queries see progress
-        if results:
-            db.update_run_progress(
-                run_id,
-                files_indexed=0,
-                files_skipped=len(results),
-                files_errored=0,
-                total_chunks=0,
-            )
-
-        if to_extract:
-            await _extract_and_store_batched(to_extract, results, run_id)
-
-        indexed = sum(1 for r in results if r["status"] == "indexed")
-        skipped = sum(1 for r in results if r["status"] == "skipped")
-        errored = sum(1 for r in results if r["status"] == "error")
-        total_chunks = sum(int(r.get("chunk_count", 0)) for r in results)
-        db.finish_run(
-            run_id,
-            files_indexed=indexed,
-            files_skipped=skipped,
-            files_errored=errored,
-            total_chunks=total_chunks,
-        )
+        _update_progress(run_id, results)
+        await _extract_and_store(to_extract, results, run_id)
+        _finish(run_id, results)
     except IndexAbortedError as exc:
         db.abort_run(run_id, str(exc))
         raise
@@ -517,6 +601,16 @@ async def index_path_async(
         db.log_run_error(run_id, str(exc))
         raise
     return results
+
+
+def _finish(run_id: int, results: list[dict[str, str | int]]) -> None:
+    db.finish_run(
+        run_id,
+        files_indexed=sum(1 for r in results if r["status"] == "indexed"),
+        files_skipped=sum(1 for r in results if r["status"] == "skipped"),
+        files_errored=sum(1 for r in results if r["status"] == "error"),
+        total_chunks=sum(int(r.get("chunk_count", 0)) for r in results),
+    )
 
 
 def _check_not_shrunk(directory: Path, files_found: int) -> None:

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import SecretStr
 
+from . import database
 from .config import get_config
 from .errors import ExtractionError, VisionDeferredError
 
@@ -355,10 +356,10 @@ def _cache_conn() -> sqlite3.Connection | None:
 
     Extraction runs on worker threads, which cannot share the main thread's
     connection; cache lookups are single-row reads and writes, so each
-    worker keeps its own.
+    worker keeps its own, on the same file the main connection opened.
     """
-    db_path = get_config().db_path
-    if db_path == ":memory:":
+    db_path = database.opened_path()
+    if db_path is None or db_path == ":memory:":
         return None
     if getattr(_cache_local, "path", None) != db_path:
         _cache_local.conn = sqlite3.connect(db_path, timeout=30)

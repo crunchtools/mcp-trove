@@ -143,6 +143,7 @@ def _index_one(dir_path: str, entry: dict[str, Any]) -> bool:
     skipped = result.get("files_skipped", 0)
     errored = result.get("files_errored", 0)
     deferred = result.get("files_deferred", 0)
+    removed = result.get("files_removed", 0)
     chunks = result.get("total_chunks", 0)
     found = indexed + skipped + errored + deferred
     entry.update(
@@ -151,6 +152,7 @@ def _index_one(dir_path: str, entry: dict[str, Any]) -> bool:
         files_skipped=skipped,
         files_errored=errored,
         files_deferred=deferred,
+        files_removed=removed,
         total_chunks=chunks,
     )
     print(f"{dir_path}: {indexed} indexed, {skipped} skipped, {chunks} chunks")

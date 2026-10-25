@@ -6,6 +6,7 @@ import gc
 import logging
 import math
 import tempfile
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -142,11 +143,58 @@ def extract_text(path: Path, checksum: str | None = None) -> str:
     return _extract_text_file(path)
 
 
+HTML_EXTENSIONS = {".html", ".htm"}
+
+
 def _extract_text_file(path: Path) -> str:
     try:
-        return path.read_text(encoding="utf-8", errors="replace")
+        text = path.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         raise ExtractionError(str(path), str(exc)) from exc
+    if path.suffix.lower() in HTML_EXTENSIONS:
+        return _html_to_text(text)
+    return text
+
+
+class _TextCollector(HTMLParser):
+    """Collects an HTML page's visible text, skipping scripts and styles."""
+
+    _SKIPPED = frozenset({"script", "style", "noscript", "template"})
+    _BLOCKS = frozenset({"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"})
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self._skipping = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        _ = attrs
+        if tag in self._SKIPPED:
+            self._skipping += 1
+        elif tag in self._BLOCKS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._SKIPPED and self._skipping:
+            self._skipping -= 1
+
+    def handle_data(self, text: str) -> None:
+        if not self._skipping:
+            self.parts.append(text)
+
+
+def _html_to_text(markup: str) -> str:
+    """Visible text of an HTML page, one line per block, blank runs collapsed.
+
+    Raw markup was embedded before, so a saved spreadsheet page became
+    thousands of chunks of tags (the 864 KB table that OOM-killed the
+    indexer, RT #1542) and searched badly.
+    """
+    collector = _TextCollector()
+    collector.feed(markup)
+    collector.close()
+    lines = (" ".join(line.split()) for line in "".join(collector.parts).splitlines())
+    return "\n".join(line for line in lines if line)
 
 
 def _extract_pdf(path: Path, checksum: str | None = None) -> str:

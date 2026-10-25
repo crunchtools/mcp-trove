@@ -26,7 +26,7 @@ def get_model() -> TextEmbedding:
         from fastembed import TextEmbedding
 
         model_name = get_config().embedding_model
-        _model = TextEmbedding(model_name=model_name)
+        _model = TextEmbedding(model_name=model_name, threads=get_config().embed_threads)
     return _model
 
 

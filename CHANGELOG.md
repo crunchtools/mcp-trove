@@ -10,6 +10,37 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-25
+
+### Added
+
+- Manifest scans (`TROVE_MANIFEST_DIR`): the scan reads paths, sizes and
+  mtimes from an rclone `lsjson` listing the host writes before a run (at the
+  index path under that directory, plus `.lsjson`), instead
+  of walking and stat'ing the tree over the mount. 5,600 pCloud files list in
+  3 s. A missing, unreadable or over-6-hour-old listing falls back to the walk.
+  mtimes match within 1 s.
+- With a manifest, files it no longer lists are removed from the index;
+  `files_removed` in results and `last_run.json`. A tree of 100 or more indexed
+  files losing over 10% at once aborts the path instead.
+- `TROVE_EMBED_THREADS` (default `2`) for ONNX embedding.
+
+### Changed
+
+- Extraction streams: a window of files is in flight and each is stored when
+  it finishes, instead of lockstep batches that waited on their slowest file.
+  Concurrency is capped per type: PDFs 1, DOCX/text/Markdown 2, images and
+  videos `TROVE_INDEX_WORKERS`. `TROVE_INDEX_BATCH` is unused.
+- HTML is indexed as its visible text, without markup, scripts or styles.
+- Chunks end at a paragraph break, line break or sentence end where there is
+  one in their last 40%.
+- The container no longer sets `OMP_NUM_THREADS`, which ONNX Runtime ignores.
+
+### Fixed
+
+- The caption cache used `TROVE_DB` rather than the database actually opened,
+  so with an explicit database path it read, and created, the wrong file.
+
 ## [0.11.1] - 2026-10-25
 
 ### Changed

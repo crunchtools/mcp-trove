@@ -46,7 +46,7 @@ RUN python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='BA
 FROM quay.io/hummingbird/python:3.14
 
 LABEL name="mcp-trove-crunchtools" \
-      version="0.11.1" \
+      version="0.12.0" \
       summary="Self-hosted local file indexing MCP server with semantic search" \
       description="Index local directories and search over contents using hybrid vector + keyword search" \
       maintainer="crunchtools.com" \
@@ -71,7 +71,6 @@ ENV FASTEMBED_CACHE_PATH=/fastembed-cache
 RUN ["python3", "-c", "from mcp_trove_crunchtools import main; import pymupdf, pymupdf4llm; pymupdf4llm.to_markdown; print('Installation verified')"]
 
 ENV TROVE_DB=/tmp/trove-data/trove.db
-ENV OMP_NUM_THREADS=4
 
 EXPOSE 8020
 ENTRYPOINT ["python", "-m", "mcp_trove_crunchtools"]
