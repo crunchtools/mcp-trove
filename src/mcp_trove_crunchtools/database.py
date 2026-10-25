@@ -653,6 +653,8 @@ _TRANSIENT_PATTERNS = (
     "broken pipe",
     "connection refused",
     "network unreachable",
+    "429",
+    "rate limit",
 )
 
 

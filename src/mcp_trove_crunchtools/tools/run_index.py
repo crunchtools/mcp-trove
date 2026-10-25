@@ -65,10 +65,13 @@ def run_index() -> int:
         traceback.print_exc()
         code = _report(summary, f"run failed: {exc}")
 
-    summary["vision_calls"] = vision.calls_made()
-    summary["vision_budget"] = config.vision_max_calls
-    summary["finished_at"] = _now()
-    summary["duration_seconds"] = round(time.monotonic() - started)
+    summary.update(
+        vision_calls=vision.calls_made(),
+        vision_budget=config.vision_max_calls,
+        vision_out_of_credit=vision.out_of_credit(),
+        finished_at=_now(),
+        duration_seconds=round(time.monotonic() - started),
+    )
     if code:
         summary["status"] = "failed"
     if not _write_summary(config.status_file, summary):

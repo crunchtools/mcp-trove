@@ -10,6 +10,17 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-10-25
+
+### Fixed
+
+- A vision provider refusing for want of credit (HTTP 402) was recorded as
+  a permanent failure for the file, so every photo after the account ran dry
+  was skipped for good. The run now stops captioning, defers the rest to the
+  next run without recording errors, and sets `vision_out_of_credit` in the
+  run summary. Topping up the account lets the next run carry on.
+- Rate limits (HTTP 429) count as transient failures and are retried.
+
 ## [1.0.1] - 2026-10-25
 
 ### Fixed

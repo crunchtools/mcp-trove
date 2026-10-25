@@ -1423,7 +1423,7 @@ wheels = [
 
 [[package]]
 name = "mcp-trove-crunchtools"
-version = "1.0.1"
+version = "1.0.2"
 source = { editable = "." }
 dependencies = [
     { name = "av", version = "18.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },

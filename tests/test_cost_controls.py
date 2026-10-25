@@ -397,3 +397,31 @@ class TestScanRenderBound:
 
         assert rendered.width * rendered.height <= SCANNED_PDF_MAX_PIXELS
         doc.close()
+
+
+class TestOutOfCredit:
+    async def test_empty_account_defers_the_rest_without_poisoning(
+        self, tmp_path: Path, in_memory_db: sqlite3.Connection
+    ) -> None:
+        """A 402 recorded per file would mark every photo a permanent failure."""
+        from mcp_trove_crunchtools import vision
+        from mcp_trove_crunchtools.errors import ExtractionError
+
+        for n in range(4):
+            (tmp_path / f"photo{n}.jpg").write_bytes(b"\xff\xd8" + bytes([n]))
+        backend = MagicMock()
+        backend.caption.side_effect = ExtractionError(
+            "photo", "Error code: 402 - Insufficient credits. Add more using the dashboard"
+        )
+
+        with patch.object(vision, "get_backend", return_value=backend):
+            results = await index_path_async(tmp_path)
+
+        assert [r["status"] for r in results] == ["deferred"] * 4
+        assert backend.caption.call_count == 1
+        assert db.query("SELECT id FROM index_errors") == []
+        assert db.known_failures() == set()
+        assert vision.out_of_credit()
+
+    def test_rate_limits_are_retried(self) -> None:
+        assert db.classify_error("Error code: 429 - Rate limit exceeded") == "transient"
