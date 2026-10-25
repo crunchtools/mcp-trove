@@ -72,6 +72,20 @@ class TestManifest:
         with patch("mcp_trove_crunchtools.manifest.MANIFEST_MAX_BYTES", 10):
             assert load_manifest(tmp_path) is None
 
+    def test_unstattable_manifest_falls_back(self, tmp_path: Path, manifests: Path) -> None:
+        from mcp_trove_crunchtools import manifest as manifest_mod
+
+        source = _write_manifest(tmp_path, [_entry("b.txt")])
+        real_stat = Path.stat
+
+        def stat(self: Path, **kwargs: Any) -> os.stat_result:
+            if self == source:
+                raise PermissionError("denied")
+            return real_stat(self, **kwargs)
+
+        with patch.object(manifest_mod.Path, "stat", stat):
+            assert load_manifest(tmp_path) is None
+
     def test_missing_manifest_falls_back(self, tmp_path: Path, manifests: Path) -> None:
         assert load_manifest(tmp_path / "elsewhere") is None
 
