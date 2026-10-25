@@ -1,6 +1,6 @@
 [project]
 name = "mcp-trove-crunchtools"
-version = "0.14.1"
+version = "0.15.0"
 description = "Self-hosted local file indexing MCP server with semantic search"
 requires-python = ">=3.11"
 license = "AGPL-3.0-or-later"
@@ -24,6 +24,12 @@ dependencies = [
     "sqlite-vec>=0.1",
     "pymupdf4llm>=0.0.17,<2",
     "python-docx>=1.0",
+    "python-pptx>=1.0",
+    "openpyxl>=3.1",
+    "xlrd>=2.0",
+    "olefile>=0.47",
+    "striprtf>=0.0.26",
+    "defusedxml>=0.7",
 ]
 
 [project.optional-dependencies]
@@ -87,6 +93,10 @@ max-complexity = 10
 # keeps `get_model()` cheap to import when embeddings aren't needed yet.
 # PLW0603: get_model is a lazy singleton needing `global`.
 "src/mcp_trove_crunchtools/embedder.py" = ["PLC0415", "PLW0603"]
+# PLC0415: each reader imports its format's library when a file of that
+# format is first read, so the MCP server does not load openpyxl, python-pptx
+# and the rest at startup for formats it may never see.
+"src/mcp_trove_crunchtools/documents.py" = ["PLC0415"]
 # PLC0415: __init__.py's main()/_run_index() defer every internal import so
 # `import mcp_trove_crunchtools` (or a submodule import that runs this file
 # first) stays cheap -- it does not pull in the full FastMCP server and tool
@@ -118,10 +128,10 @@ warn_return_any = true
 warn_unused_configs = true
 # pymupdf ships partial annotations: pymupdf.open() is untyped, which strict
 # mode's disallow_untyped_calls rejects.
-untyped_calls_exclude = ["pymupdf"]
+untyped_calls_exclude = ["pymupdf", "striprtf"]
 
 [[tool.mypy.overrides]]
-module = ["fastembed", "pymupdf4llm", "pymupdf4llm.*", "docx", "sqlite_vec", "google", "google.genai", "openai", "PIL", "PIL.ExifTags"]
+module = ["fastembed", "pymupdf4llm", "pymupdf4llm.*", "docx", "sqlite_vec", "google", "google.genai", "openai", "PIL", "PIL.ExifTags", "openpyxl", "xlrd", "olefile", "striprtf.*", "defusedxml", "defusedxml.*", "pptx"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

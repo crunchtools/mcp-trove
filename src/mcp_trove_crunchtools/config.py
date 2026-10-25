@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .filetypes import DEFAULT_INDEX_TYPES, parse_index_other, parse_index_types
+
 if TYPE_CHECKING:
     from pydantic import SecretStr
 
@@ -57,14 +59,13 @@ class Config:
         self.exclude_patterns: list[str] = _parse_exclude(
             os.environ.get("TROVE_EXCLUDE_PATTERNS", DEFAULT_EXCLUDE_PATTERNS)
         )
-        # Source code, configuration and logs are skipped unless asked for:
-        # they are not documents, they are slow to embed, and a .env or .conf
-        # can hold secrets.
-        self.index_source_code: bool = os.environ.get("TROVE_INDEX_SOURCE_CODE", "").lower() in {
-            "1",
-            "true",
-            "yes",
-        }
+        # Content categories to index (filetypes.CATEGORIES), and what to do
+        # with every other file: "name" indexes its name and folder alone, so
+        # it can still be found; "skip" leaves it out.
+        self.index_types: frozenset[str] = parse_index_types(
+            os.environ.get("TROVE_INDEX_TYPES", DEFAULT_INDEX_TYPES)
+        )
+        self.index_other: str = parse_index_other(os.environ.get("TROVE_INDEX_OTHER", "name"))
         self.chunk_size: int = int(os.environ.get("TROVE_CHUNK_SIZE", str(DEFAULT_CHUNK_SIZE)))
         self.chunk_overlap: int = int(
             os.environ.get("TROVE_CHUNK_OVERLAP", str(DEFAULT_CHUNK_OVERLAP))

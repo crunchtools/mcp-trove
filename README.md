@@ -5,7 +5,7 @@ Self-hosted local file indexing MCP server with semantic search. Index any local
 ## Features
 
 - **Hybrid search** — Combines semantic vector similarity with FTS5 keyword matching
-- **Multiple file formats** — PDF, DOCX, Markdown, plain text; source code, configuration and logs with `TROVE_INDEX_SOURCE_CODE`
+- **Content categories** — images and videos (captioned), PDF, text, documents (DOCX, DOC, ODT, RTF), spreadsheets (XLSX, XLS, ODS, CSV) and presentations (PPTX, ODP) by default; web pages, data files and source code on request. Every other file can still be found by its name
 - **Local-first** — No cloud services, no per-seat fees, your data stays on your machine
 - **Lightweight embeddings** — Uses fastembed (ONNX runtime) instead of PyTorch (~22MB vs ~2GB)
 - **Incremental indexing** — SHA-256 checksum-based change detection
@@ -77,7 +77,8 @@ claude mcp add mcp-trove-crunchtools -- uvx mcp-trove-crunchtools
 | `TROVE_EMBED_THREADS` | `2` | ONNX threads for embedding |
 | `TROVE_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | fastembed model name |
 | `TROVE_EXCLUDE_PATTERNS` | `*.iso,*.zip,...` | Comma-separated glob patterns, matched against file names and the names of the directories above them (`Old Backup` skips that whole tree). Entries already indexed that a pattern now matches are removed on the next run |
-| `TROVE_INDEX_SOURCE_CODE` | `false` | Index source code, configuration and log files (`.py`, `.c`, `.sh`, `.conf`, `.env`, `.log`, ...). Off, they are skipped, and any already indexed are removed on the next run |
+| `TROVE_INDEX_TYPES` | `images,videos,pdf,text,documents,spreadsheets,presentations` | Content categories to read and index. Also available: `web` (html), `data` (json, yaml, xml, ...), `code` (source, config and log files). An unknown name stops the server at startup. Spreadsheets are indexed by the first 200 rows of each sheet, presentations by slide text and notes |
+| `TROVE_INDEX_OTHER` | `name` | Every file outside those categories: `name` indexes its name, folder and extension without reading it, so it can still be found; `skip` leaves it out. Files over 50 MB in a category also get the name entry. Switching a category on or off re-reads or removes its files on the next run |
 | `TROVE_CHUNK_SIZE` | `1000` | Characters per text chunk |
 | `TROVE_CHUNK_OVERLAP` | `200` | Overlap between chunks |
 | `TROVE_PDF_MAX_PAGES` | `5` | Pages indexed from the start of each PDF, enough to tell what the document is about while keeping memory flat on large manuals; `0` or negative indexes every page |

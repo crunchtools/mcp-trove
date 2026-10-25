@@ -46,7 +46,7 @@ RUN python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='BA
 FROM quay.io/hummingbird/python:3.14
 
 LABEL name="mcp-trove-crunchtools" \
-      version="0.14.1" \
+      version="0.15.0" \
       summary="Self-hosted local file indexing MCP server with semantic search" \
       description="Index local directories and search over contents using hybrid vector + keyword search" \
       maintainer="crunchtools.com" \
@@ -68,7 +68,7 @@ ENV FASTEMBED_CACHE_PATH=/fastembed-cache
 # Import the PDF stack by name: extractor.py imports it lazily, so a hollow
 # pymupdf4llm (2.0 shipped as an empty shim, RT #1542) would otherwise pass
 # this check and fail every PDF at runtime.
-RUN ["python3", "-c", "from mcp_trove_crunchtools import main; import pymupdf, pymupdf4llm; pymupdf4llm.to_markdown; print('Installation verified')"]
+RUN ["python3", "-c", "from mcp_trove_crunchtools import main; import pymupdf, pymupdf4llm; pymupdf4llm.to_markdown; import docx, pptx, openpyxl, xlrd, olefile, striprtf.striprtf, defusedxml; print('Installation verified')"]
 
 ENV TROVE_DB=/tmp/trove-data/trove.db
 

@@ -357,7 +357,7 @@ class TestExclusion:
     async def test_code_kept_when_asked_for(
         self, tmp_path: Path, in_memory_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(indexer_mod.get_config(), "index_source_code", True)
+        monkeypatch.setattr(indexer_mod.get_config(), "index_types", frozenset({"code"}))
         (tmp_path / "tool.py").write_text("print('hi')")
 
         results = await index_path_async(tmp_path)

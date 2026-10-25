@@ -21,16 +21,15 @@ from . import vision
 from .config import get_config
 from .embedder import embed_texts
 from .errors import ExtractionError, IndexAbortedError, VisionDeferredError
-from .extractor import detect_file_type, extract_text, is_source_code, is_supported
+from .extractor import MAX_FILE_SIZE, classify, detect_file_type, extract_text
+from .filetypes import NAME_KIND, VISION_KINDS, is_media
 from .manifest import Entry, load_manifest
 
 logger = logging.getLogger(__name__)
 
 HASH_BUFFER_SIZE = 65536
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 # A directory whose file count falls below this share of its last completed
 # run is treated as a broken source (empty or half-mounted), not mass deletion.
-VISION_TYPES = {"image", "video"}
 MIN_FOUND_RATIO = 0.5
 MIN_FOUND_BASELINE = 100  # smaller trees are too noisy to judge
 EMBED_BATCH_SIZE = 256  # chunks embedded per call, matching fastembed's default batch
@@ -42,7 +41,21 @@ MTIME_TOLERANCE = 1.0
 MAX_REMOVED_RATIO = 0.10
 # Extractions run per type: PDFs are the memory-heavy ones, media wait on the
 # network and the vision API, so they get the worker count.
-TYPE_CONCURRENCY = {"pdf": 1, "docx": 2, "text": 2, "markdown": 2}
+# A name-only entry reads nothing, so it gets the most.
+TYPE_CONCURRENCY = {
+    "pdf": 1,
+    "docx": 2,
+    "doc": 2,
+    "odf": 2,
+    "rtf": 2,
+    "xlsx": 2,
+    "xls": 2,
+    "table": 2,
+    "pptx": 2,
+    "text": 2,
+    "markdown": 2,
+    NAME_KIND: 4,
+}
 PROGRESS_EVERY = 25  # stored files between progress updates
 TRIM_EVERY = 50  # stored files between returning freed memory to the OS
 
@@ -118,10 +131,10 @@ def scan_directory(
             if any(fnmatch.fnmatch(name, pat) for pat in patterns):
                 continue
             path = Path(dirpath, name)
-            if not is_supported(path):
+            if _is_own_database(path):
                 continue
             try:
-                if not path.is_file() or path.stat().st_size > MAX_FILE_SIZE:
+                if not path.is_file() or classify(path, path.stat().st_size) is None:
                     continue
             except OSError:
                 continue
@@ -143,7 +156,7 @@ def scan_source(directory: Path) -> tuple[list[Path], dict[Path, Entry] | None]:
     kept = {
         path: entry
         for path, entry in entries.items()
-        if _wanted(path.relative_to(directory), entry.size, patterns)
+        if _wanted(path.relative_to(directory), entry.size, patterns) and not _is_own_database(path)
     }
     return sorted(kept), kept
 
@@ -152,11 +165,24 @@ def _wanted(relative: Path, size: int, patterns: list[str]) -> bool:
     """The walk's filters, applied to a manifest entry."""
     if any(part.startswith(".") for part in relative.parts):
         return False
-    if size > MAX_FILE_SIZE:
-        return False
     if _excluded(relative, patterns):
         return False
-    return is_supported(relative)
+    return classify(relative, size) is not None
+
+
+def _is_own_database(path: Path) -> bool:
+    """Whether path is the index's own database or one of its sidecar files.
+
+    A database kept inside an indexed tree would otherwise get a name-only
+    entry, and its WAL a new one on every write.
+    """
+    opened = db.opened_path() or get_config().db_path
+    return str(path).startswith(opened) and str(path)[len(opened) :] in {
+        "",
+        "-wal",
+        "-shm",
+        "-journal",
+    }
 
 
 def _excluded(relative: Path, patterns: list[str]) -> bool:
@@ -167,17 +193,20 @@ def _excluded(relative: Path, patterns: list[str]) -> bool:
 def _remove_excluded(directory: Path) -> list[dict[str, str | int]]:
     """Drop index entries under directory that the configuration now excludes.
 
-    Only explicit policy counts: TROVE_EXCLUDE_PATTERNS, and source code while
-    TROVE_INDEX_SOURCE_CODE is off. Images are never dropped here, so a vision
-    backend left unset does not throw away paid-for captions.
+    TROVE_EXCLUDE_PATTERNS, and files TROVE_INDEX_TYPES and TROVE_INDEX_OTHER
+    no longer index in any form. Images and videos are never dropped here, so
+    a vision backend left unset does not throw away paid-for captions. A file
+    that moves between a category and its name-only entry is re-extracted by
+    the partition, not removed.
     """
-    config = get_config()
-    gone = [
-        row
-        for row in _rows_under(directory)
-        if _excluded(Path(row["path"]).relative_to(directory), config.exclude_patterns)
-        or (not config.index_source_code and is_source_code(Path(row["path"])))
-    ]
+    patterns = get_config().exclude_patterns
+    gone = []
+    for row in _rows_under(directory):
+        path = Path(row["path"])
+        if _excluded(path.relative_to(directory), patterns) or (
+            classify(path) is None and not is_media(path.suffix.lower())
+        ):
+            gone.append(row)
     for row in gone:
         db.delete_file_data(row["id"])
     return [
@@ -220,7 +249,7 @@ def _check_unchanged(
         file_size, mtime = stat.size, stat.mtime
 
     existing = db.query_one(
-        "SELECT id, checksum, file_size, mtime FROM files WHERE path = ?",
+        "SELECT id, checksum, file_type, file_size, mtime FROM files WHERE path = ?",
         (str(resolved),),
     )
 
@@ -238,9 +267,28 @@ def _check_unchanged(
     ):
         return existing["checksum"], file_size, mtime, existing
 
-    # Slow path: compute checksum
+    # Slow path: compute checksum. A name-only entry is never read, so its
+    # stand-in checksum is rebuilt from the stat instead.
+    if classify(resolved, file_size) == NAME_KIND:
+        return name_checksum(file_size, mtime), file_size, mtime, existing
     checksum = compute_checksum(resolved)
     return checksum, file_size, mtime, existing
+
+
+def _current(existing: dict[str, Any], checksum: str, path: Path, file_size: int) -> bool:
+    """Whether the indexed entry is this content, read the way it is read now.
+
+    A file whose category was switched on since it got its name-only entry,
+    or switched off since it was read, is re-extracted.
+    """
+    return bool(
+        existing["checksum"] == checksum and existing["file_type"] == classify(path, file_size)
+    )
+
+
+def name_checksum(file_size: int, mtime: float) -> str:
+    """The checksum recorded for a name-only entry, whose bytes are never read."""
+    return f"name:{file_size}:{int(mtime)}"
 
 
 def _extract_one(
@@ -259,19 +307,22 @@ def _extract_one(
     # just to be deferred; defer it before reading a byte. That includes one
     # whose caption is cached: finding out needs its checksum, which is the
     # download. It is indexed on the next run.
-    if detect_file_type(resolved) in VISION_TYPES and vision.budget_spent():
+    if detect_file_type(resolved) in VISION_KINDS and vision.budget_spent():
         raise VisionDeferredError(str(resolved), get_config().vision_max_calls)
     # The scan's size can come from a manifest hours old; the limit is
     # enforced on the file as it is now, before it is read.
-    file_size = resolved.stat().st_size
-    if file_size > MAX_FILE_SIZE:
+    stat = resolved.stat()
+    file_size = stat.st_size
+    file_type = classify(resolved, file_size)
+    if file_type is None:
         raise ExtractionError(
             str(resolved), f"{file_size} bytes is over the {MAX_FILE_SIZE} byte limit"
         )
-    if not checksum:
+    if file_type == NAME_KIND:
+        checksum = name_checksum(file_size, stat.st_mtime)
+    elif not checksum:
         checksum = compute_checksum(resolved)
-    text = extract_text(resolved, checksum)
-    file_type = detect_file_type(resolved)
+    text = extract_text(resolved, checksum, file_type)
     config = get_config()
     if len(text) > config.max_text_chars:
         logger.warning(
@@ -368,7 +419,7 @@ def index_file(path: Path, force: bool = False) -> dict[str, str | int]:
     try:
         checksum, file_size, mtime, existing = _check_unchanged(resolved)
 
-        if existing and existing["checksum"] == checksum and not force:
+        if existing is not None and _current(existing, checksum, resolved, file_size) and not force:
             if existing["mtime"] is None:
                 db.update_file_mtime(existing["id"], mtime)
             db.finish_run(
@@ -424,7 +475,7 @@ def _partition_unchanged(
         stat = stats.get(fp) if stats else None
         checksum, file_size, mtime, existing = _check_unchanged(fp, stat)
         shown = str(fp) if stat else str(fp.resolve())
-        if existing and existing["checksum"] == checksum and not force:
+        if existing is not None and _current(existing, checksum, fp, file_size) and not force:
             # Backfill mtime if DB has NULL so fast-skip works next run
             if existing["mtime"] is None:
                 db.update_file_mtime(existing["id"], mtime)

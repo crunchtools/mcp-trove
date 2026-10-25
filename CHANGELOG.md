@@ -10,6 +10,35 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-25
+
+### Added
+
+- `TROVE_INDEX_TYPES`: an allowlist of content categories (images, videos,
+  pdf, text, documents, spreadsheets, presentations, web, data, code), in
+  place of indexing every text-like extension. The default reads the first
+  seven; web pages, data files and code are opt-in.
+- `TROVE_INDEX_OTHER` (default `name`): every file outside the enabled
+  categories, and any over 50 MB, is indexed by its name, folder and
+  extension without being read or hashed, so it can still be found. `skip`
+  leaves such files out.
+- Readers for Word 97-2003 `.doc` (its piece table, read with olefile; no
+  converter binary), OpenDocument text, spreadsheets and presentations,
+  `.xlsx` and `.xls` (first 200 rows of each sheet), `.pptx` (slide text and
+  notes), `.rtf`, and the first 200 lines of `.csv`/`.tsv`.
+- A file is re-read when its category is switched on or off, and entries
+  for files the configuration no longer indexes in any form are removed;
+  images and videos are never removed this way.
+
+### Removed
+
+- `TROVE_INDEX_SOURCE_CODE` (0.14.0): add `code` to `TROVE_INDEX_TYPES`.
+
+### Fixed
+
+- The index's own database is never indexed when it sits inside an indexed
+  tree.
+
 ## [0.14.1] - 2026-10-25
 
 ### Fixed

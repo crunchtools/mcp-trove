@@ -11,83 +11,12 @@ from pathlib import Path
 from typing import Any
 
 from .config import get_config
+from .documents import DOCUMENT_EXTRACTORS
 from .errors import ExtractionError, UnsupportedFileTypeError
+from .filetypes import KINDS, NAME_KIND, VISION_KINDS, category_of
 
 logger = logging.getLogger(__name__)
 
-TEXT_EXTENSIONS = {
-    ".txt",
-    ".md",
-    ".markdown",
-    ".rst",
-    ".csv",
-    ".tsv",
-    ".json",
-    ".yaml",
-    ".yml",
-    ".toml",
-    ".ini",
-    ".cfg",
-    ".py",
-    ".js",
-    ".ts",
-    ".go",
-    ".rs",
-    ".java",
-    ".c",
-    ".cpp",
-    ".h",
-    ".sh",
-    ".bash",
-    ".zsh",
-    ".fish",
-    ".html",
-    ".htm",
-    ".xml",
-    ".svg",
-    ".sql",
-    ".r",
-    ".rb",
-    ".pl",
-    ".lua",
-    ".tex",
-    ".bib",
-    ".org",
-    ".log",
-    ".conf",
-    ".env",
-}
-
-# The part of TEXT_EXTENSIONS that is programs, configuration and logs,
-# indexed only with TROVE_INDEX_SOURCE_CODE.
-SOURCE_CODE_EXTENSIONS = {
-    ".py",
-    ".js",
-    ".ts",
-    ".go",
-    ".rs",
-    ".java",
-    ".c",
-    ".cpp",
-    ".h",
-    ".sh",
-    ".bash",
-    ".zsh",
-    ".fish",
-    ".sql",
-    ".r",
-    ".rb",
-    ".pl",
-    ".lua",
-    ".toml",
-    ".ini",
-    ".cfg",
-    ".conf",
-    ".env",
-    ".log",
-}
-
-PDF_EXTENSIONS = {".pdf"}
 # Below this many characters of text on its leading pages, a PDF is treated
 # as a scan and its first page is captioned through the vision backend.
 SCANNED_PDF_MIN_CHARS = 20
@@ -96,92 +25,81 @@ SCANNED_PDF_DPI = 150
 # A PDF can declare an enormous page; the render is scaled down to stay
 # under this many pixels (about 12 MB as RGB) whatever the page size.
 SCANNED_PDF_MAX_PIXELS = 4_000_000
-DOCX_EXTENSIONS = {".docx"}
-MARKDOWN_EXTENSIONS = {".md", ".markdown"}
-
-IMAGE_EXTENSIONS = {
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".gif",
-    ".heic",
-    ".heif",
-    ".webp",
-    ".bmp",
-    ".tiff",
-    ".tif",
-}
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".webm", ".mkv"}
-
-_BASE_EXTENSIONS = TEXT_EXTENSIONS | PDF_EXTENSIONS | DOCX_EXTENSIONS
+# Read, and so held in memory, only up to this size; a bigger file in an
+# indexed category falls back to TROVE_INDEX_OTHER.
+MAX_FILE_SIZE = 50 * 1024 * 1024
 
 
-def _get_supported_extensions() -> set[str]:
-    """Build supported extensions, including vision types when configured."""
+def classify(path: Path, size: int | None = None) -> str | None:
+    """The extractor for path under the configuration, or None to skip it.
+
+    A file in an enabled category gets that category's extractor. Images and
+    videos also need a vision backend; without one they are skipped, not
+    filed by name, so they are captioned once a backend is set. Anything else
+    gets the name-only entry when TROVE_INDEX_OTHER is "name". size, when
+    known, sends a file too big to read to the name-only entry too.
+    """
     from .vision import get_backend
 
-    extensions = set(_BASE_EXTENSIONS)
-    if not get_config().index_source_code:
-        extensions -= SOURCE_CODE_EXTENSIONS
-    if get_backend() is not None:
-        extensions |= IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
-    return extensions
-
-
-def is_source_code(path: Path) -> bool:
-    """Whether path is source code, configuration or a log (SOURCE_CODE_EXTENSIONS).
-
-    A dotfile such as .env has no suffix, so its whole name is checked too.
-    """
-    return (
-        path.suffix.lower() in SOURCE_CODE_EXTENSIONS or path.name.lower() in SOURCE_CODE_EXTENSIONS
-    )
-
-
-SUPPORTED_EXTENSIONS = _BASE_EXTENSIONS
+    config = get_config()
+    suffix = path.suffix.lower()
+    category = category_of(suffix)
+    if category in config.index_types:
+        kind = KINDS.get(suffix, "text")
+        if kind in VISION_KINDS and get_backend() is None:
+            return None
+        if size is None or size <= MAX_FILE_SIZE:
+            return kind
+    return NAME_KIND if config.index_other == "name" else None
 
 
 def detect_file_type(path: Path) -> str:
-    """Detect file type from extension."""
-    suffix = path.suffix.lower()
-    if suffix in PDF_EXTENSIONS:
-        return "pdf"
-    if suffix in DOCX_EXTENSIONS:
-        return "docx"
-    if suffix in MARKDOWN_EXTENSIONS:
-        return "markdown"
-    if suffix in TEXT_EXTENSIONS:
-        return "text"
-    if suffix in IMAGE_EXTENSIONS:
-        return "image"
-    if suffix in VIDEO_EXTENSIONS:
-        return "video"
-    msg = suffix or "(no extension)"
-    raise UnsupportedFileTypeError(str(path), msg)
+    """The extractor for path, raising when the configuration skips it."""
+    kind = classify(path)
+    if kind is None:
+        raise UnsupportedFileTypeError(str(path), path.suffix.lower() or "(no extension)")
+    return kind
 
 
 def is_supported(path: Path) -> bool:
-    """Check if a file type is supported for extraction."""
-    return path.suffix.lower() in _get_supported_extensions()
+    """Whether the configuration indexes path in any form."""
+    return classify(path) is not None
 
 
-def extract_text(path: Path, checksum: str | None = None) -> str:
+def extract_text(path: Path, checksum: str | None = None, file_type: str | None = None) -> str:
     """Extract text content from a file.
 
     checksum, the file's SHA-256, lets vision captions be reused across files
     with the same content; without it every caption is a new API call.
     """
-    file_type = detect_file_type(path)
+    file_type = file_type or detect_file_type(path)
 
     if file_type == "pdf":
         return _extract_pdf(path, checksum)
-    if file_type == "docx":
-        return _extract_docx(path)
     if file_type == "image":
         return _extract_image(path, checksum)
     if file_type == "video":
         return _extract_video(path, checksum)
+    if file_type == NAME_KIND:
+        return name_entry(path)
+    if file_type in DOCUMENT_EXTRACTORS:
+        # Each reader raises its library's own errors, or ValueError naming
+        # what is wrong with the file; any of them fails just this file.
+        try:
+            return DOCUMENT_EXTRACTORS[file_type](path)
+        except Exception as exc:
+            raise ExtractionError(str(path), str(exc) or type(exc).__name__) from exc
     return _extract_text_file(path)
+
+
+def name_entry(path: Path) -> str:
+    """The searchable text for a file that is not read: its name and folder.
+
+    The extension is spelled out too, so a search for "spreadsheet" or
+    "dwg" can match a file whose contents Trove does not open.
+    """
+    suffix = path.suffix.lower().lstrip(".") or "no extension"
+    return f"[File] {path.name}\n[Folder] {path.parent}\n[Type] {suffix}"
 
 
 HTML_EXTENSIONS = {".html", ".htm"}
@@ -339,19 +257,6 @@ def _caption_png(png: bytes, checksum: str | None) -> str:
         page = Path(scan_dir) / "page1.png"
         page.write_bytes(png)
         return caption_cached(page, "image", checksum)
-
-
-def _extract_docx(path: Path) -> str:
-    try:
-        import docx
-
-        doc = docx.Document(str(path))
-        paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-        return "\n\n".join(paragraphs)
-    except ImportError as exc:
-        raise ExtractionError(str(path), "python-docx not installed") from exc
-    except Exception as exc:
-        raise ExtractionError(str(path), str(exc)) from exc
 
 
 def _extract_exif(path: Path) -> str:

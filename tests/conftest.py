@@ -43,6 +43,12 @@ def _mock_embed_query(text: str) -> list[float]:
 
 
 @pytest.fixture(autouse=True)
+def _index_other_skip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests see the allowlist alone; name-only entries are tested on their own."""
+    monkeypatch.setenv("TROVE_INDEX_OTHER", "skip")
+
+
+@pytest.fixture(autouse=True)
 def _reset_singletons() -> Generator[None]:
     """Reset config, database, and embedder singletons between tests."""
     config_mod._config = None
