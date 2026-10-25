@@ -248,33 +248,20 @@ def _extract_pdf(path: Path, checksum: str | None = None) -> str:
     """
     try:
         import pymupdf
-        import pymupdf4llm
-        from pymupdf4llm.helpers.pymupdf_rag import IdentifyHeaders
     except ImportError as exc:
         raise ExtractionError(str(path), "pymupdf4llm not installed") from exc
 
-    from .vision import get_backend
-
     max_pages = get_config().pdf_max_pages
+    locked = False
+    markdown = ""
     scan_png: bytes | None = None
     try:
         with pymupdf.open(str(path)) as doc:
-            page_count = doc.page_count
-            if max_pages > 0:
-                page_count = min(max_pages, page_count)
-            pages = list(range(page_count))
-            # to_markdown's default header detection scans every page of the
-            # document, not just `pages`, so it is built over the same pages.
-            markdown: str = pymupdf4llm.to_markdown(
-                doc, pages=pages, hdr_info=IdentifyHeaders(doc, pages=pages)
-            )
-            if (
-                pages
-                and get_config().vision_pdf_scans
-                and get_backend() is not None
-                and _is_scan(doc, pages[:SCANNED_PDF_CHECK_PAGES])
-            ):
-                scan_png = _render_page(doc[0])
+            # A locked document has no metadata and no pages, and pymupdf4llm
+            # fails on it with "'NoneType' object is not subscriptable".
+            locked = bool(doc.needs_pass)
+            if not locked:
+                markdown, scan_png = _pdf_to_markdown(doc, max_pages)
     except Exception as exc:
         raise ExtractionError(str(path), str(exc)) from exc
     finally:
@@ -283,10 +270,39 @@ def _extract_pdf(path: Path, checksum: str | None = None) -> str:
         # past its 1.5 GB limit (RT #1542).
         pymupdf.TOOLS.store_shrink(100)
         gc.collect()
+    if locked:
+        raise ExtractionError(str(path), "PDF is password-protected")
     if scan_png is not None:
         caption = _caption_png(scan_png, checksum)
         markdown = f"[File] {path.name}\n[Scanned page 1] {caption}\n{markdown}".rstrip()
     return markdown
+
+
+def _pdf_to_markdown(doc: Any, max_pages: int) -> tuple[str, bytes | None]:
+    """The leading pages as markdown, and page 1 rendered when the PDF is a scan."""
+    import pymupdf4llm
+    from pymupdf4llm.helpers.pymupdf_rag import IdentifyHeaders
+
+    from .vision import get_backend
+
+    page_count = doc.page_count
+    if max_pages > 0:
+        page_count = min(max_pages, page_count)
+    pages = list(range(page_count))
+    # to_markdown's default header detection scans every page of the
+    # document, not just `pages`, so it is built over the same pages.
+    markdown: str = pymupdf4llm.to_markdown(
+        doc, pages=pages, hdr_info=IdentifyHeaders(doc, pages=pages)
+    )
+    scan_png = None
+    if (
+        pages
+        and get_config().vision_pdf_scans
+        and get_backend() is not None
+        and _is_scan(doc, pages[:SCANNED_PDF_CHECK_PAGES])
+    ):
+        scan_png = _render_page(doc[0])
+    return markdown, scan_png
 
 
 def _is_scan(doc: Any, pages: list[int]) -> bool:
