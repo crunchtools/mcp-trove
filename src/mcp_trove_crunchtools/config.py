@@ -20,6 +20,8 @@ DEFAULT_INDEX_BATCH = 50
 DEFAULT_VISION_TIMEOUT = 120  # seconds per vision API call
 DEFAULT_PDF_MAX_PAGES = 5  # leading PDF pages indexed; 0 or negative = all
 DEFAULT_MAX_TEXT_CHARS = 5_000_000  # extracted text kept per file (~6k chunks)
+DEFAULT_MAX_EXTRACT_TIMEOUTS = 5  # timed-out extractions before a run aborts
+DEFAULT_BACKUP_KEEP = 3  # nightly database copies kept; 0 disables backups
 DEFAULT_EXCLUDE_PATTERNS = "*.iso,*.zip,*.tar.gz,*.tar.bz2,*.7z,*.rar,*.exe,*.dll,*.bin,*.dat"
 
 DEFAULT_VISION_PROMPT = (
@@ -60,6 +62,16 @@ class Config:
         self.max_text_chars: int = _parse_max_text_chars(
             os.environ.get("TROVE_MAX_TEXT_CHARS", str(DEFAULT_MAX_TEXT_CHARS))
         )
+        db_dir = Path(self.db_path).parent
+        # A mount point the index paths must sit on; checked before each run so
+        # an unmounted or hung source fails loudly instead of indexing nothing.
+        self.require_mount: str | None = os.environ.get("TROVE_REQUIRE_MOUNT") or None
+        self.max_extract_timeouts: int = int(
+            os.environ.get("TROVE_MAX_EXTRACT_TIMEOUTS", str(DEFAULT_MAX_EXTRACT_TIMEOUTS))
+        )
+        self.backup_dir: str = os.environ.get("TROVE_BACKUP_DIR", str(db_dir / "backups"))
+        self.backup_keep: int = int(os.environ.get("TROVE_BACKUP_KEEP", str(DEFAULT_BACKUP_KEEP)))
+        self.status_file: str = os.environ.get("TROVE_STATUS_FILE", str(db_dir / "last_run.json"))
         self.vision_backend: str = os.environ.get("TROVE_VISION_BACKEND", "none").lower()
         self.vision_model: str = os.environ.get("TROVE_VISION_MODEL", self._default_vision_model())
         self.vision_prompt: str = os.environ.get("TROVE_VISION_PROMPT", DEFAULT_VISION_PROMPT)

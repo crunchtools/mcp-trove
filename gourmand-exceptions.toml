@@ -99,3 +99,9 @@ check = "unsafe_sql_construction"
 path = "src/mcp_trove_crunchtools/database.py"
 justification = "query_errors()'s WHERE clause is built from hardcoded strings only ('resolved = ?', 'path LIKE ?') -- every user-controlled value (resolved, path) is bound via the params tuple through ? placeholders, never interpolated into the SQL text itself. Same verified pattern as the S608 ruff ignore scoped to this file."
 classification = "by_design"
+
+[[exceptions]]
+check = "direct_exit"
+path = "src/mcp_trove_crunchtools/__init__.py"
+justification = "main() is the console entry point. In --index mode it ends with os._exit(code) on purpose: a file read stuck in the kernel on a hung FUSE mount leaves a worker thread that cannot be cancelled or joined, and a normal exit would wait on it forever (RT #1542)."
+classification = "by_design"

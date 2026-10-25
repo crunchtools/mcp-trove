@@ -53,6 +53,25 @@ class DimensionMismatchError(TroveError):
         )
 
 
+class EmbeddingModelMismatchError(TroveError):
+    """Raised when the database was built with a different embedding model."""
+
+    def __init__(self, db_model: str, model_name: str) -> None:
+        super().__init__(
+            f"Database vectors were built with embedding model '{db_model}' but "
+            f"TROVE_EMBEDDING_MODEL is '{model_name}'. Vectors from two models cannot be "
+            f"searched together: restore TROVE_EMBEDDING_MODEL={db_model}, or reindex "
+            f"into a new database (set TROVE_DB to a new path)."
+        )
+
+
+class IndexAbortedError(TroveError):
+    """Raised when a run is stopped by a safety check rather than a bug."""
+
+    def __init__(self, path: str, reason: str) -> None:
+        super().__init__(f"Indexing {path} aborted: {reason}")
+
+
 class UnsupportedFileTypeError(TroveError):
     """Raised when a file type is not supported for indexing."""
 

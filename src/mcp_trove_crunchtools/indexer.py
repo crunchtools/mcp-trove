@@ -13,6 +13,8 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import sqlite_vec
+
 from . import database as db
 
 if TYPE_CHECKING:
@@ -20,12 +22,17 @@ if TYPE_CHECKING:
 
 from .config import get_config
 from .embedder import embed_texts
+from .errors import IndexAbortedError
 from .extractor import detect_file_type, extract_text, is_supported
 
 logger = logging.getLogger(__name__)
 
 HASH_BUFFER_SIZE = 65536
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+# A directory whose file count falls below this share of its last completed
+# run is treated as a broken source (empty or half-mounted), not mass deletion.
+MIN_FOUND_RATIO = 0.5
+MIN_FOUND_BASELINE = 100  # smaller trees are too noisy to judge
 EMBED_BATCH_SIZE = 256  # chunks embedded per call, matching fastembed's default batch
 
 _T = Any  # generic element type for _batched
@@ -202,36 +209,27 @@ def _store_one(extraction: dict[str, Any]) -> dict[str, str | int]:
     chunks: list[str] = extraction["chunks"]
     existing_id = extraction.get("existing_id")
 
-    if existing_id is not None:
-        db.delete_file_data(int(existing_id))
+    # Embed before writing anything, in sub-batches so a large file's vectors
+    # are never all held as Python float lists (RT #1542); each batch is
+    # kept as float32 bytes, 1.5 KB a chunk. An embedding failure then
+    # leaves the index exactly as it was, including the file's old entry.
+    vectors: list[bytes] = []
+    for start in range(0, len(chunks), EMBED_BATCH_SIZE):
+        batch = chunks[start : start + EMBED_BATCH_SIZE]
+        vectors.extend(sqlite_vec.serialize_float32(e) for e in embed_texts(batch))
 
-    file_id = db.insert_file(path_str, checksum, file_type, file_size, mtime)
-
-    if not chunks:
-        db.update_file(file_id, checksum, file_size, 0, mtime)
+    # One transaction per file: a process killed part way (OOM, reboot) used
+    # to leave a file row matching its checksum but missing chunks, which was
+    # then skipped as unchanged on every later run.
+    with db.transaction():
+        if existing_id is not None:
+            db.delete_file_data(int(existing_id))
+        file_id = db.insert_file(path_str, checksum, file_type, file_size, mtime)
+        for index, (chunk_content, vector) in enumerate(zip(chunks, vectors, strict=True)):
+            chunk_id = db.insert_chunk(file_id, index, chunk_content)
+            db.insert_vector(chunk_id, vector)
+        db.update_file(file_id, checksum, file_size, len(chunks), mtime)
         db.resolve_errors(path_str)
-        return {"path": path_str, "status": "indexed", "chunk_count": 0}
-
-    # Embed in sub-batches so a large file's vectors are never all held as
-    # Python float lists at once (RT #1542). Batches are stored as they go,
-    # so a failure part way removes the file record and its stored chunks:
-    # a half-indexed file would otherwise match its checksum and be skipped
-    # as unchanged on every later run.
-    try:
-        for start in range(0, len(chunks), EMBED_BATCH_SIZE):
-            batch = chunks[start : start + EMBED_BATCH_SIZE]
-            embeddings = embed_texts(batch)
-            for offset, (chunk_content, embedding) in enumerate(
-                zip(batch, embeddings, strict=True)
-            ):
-                chunk_id = db.insert_chunk(file_id, start + offset, chunk_content)
-                db.insert_vector(chunk_id, embedding)
-    except Exception:
-        db.delete_file_data(file_id)
-        raise
-
-    db.update_file(file_id, checksum, file_size, len(chunks), mtime)
-    db.resolve_errors(path_str)
 
     return {"path": path_str, "status": "indexed", "chunk_count": len(chunks)}
 
@@ -330,6 +328,8 @@ async def _extract_and_store_batched(
     # EXIF extraction + file read + API call, but prevent infinite hangs.
     extract_timeout = config.vision_timeout * 3
 
+    timeouts = 0
+
     async def extract_bounded(
         file_path: Path,
         cs: str,
@@ -369,6 +369,8 @@ async def _extract_and_store_batched(
         # Store this batch immediately, then free extraction data
         for idx, raw in enumerate(extractions):
             if isinstance(raw, BaseException):
+                if isinstance(raw, TimeoutError):
+                    timeouts += 1
                 err_path = str(chunk[idx][0])
                 err_msg = str(raw)
                 logger.warning(
@@ -393,6 +395,15 @@ async def _extract_and_store_batched(
                 continue
             results.append(_store_one(raw))
         del extractions
+
+        # A timed-out extraction's thread cannot be cancelled and keeps its
+        # read open; past a few of them the source is hung (a wedged FUSE
+        # mount), and carrying on would pile up stuck threads (RT #1542).
+        if timeouts >= config.max_extract_timeouts:
+            raise IndexAbortedError(
+                str(chunk[0][0].parent),
+                f"{timeouts} extractions timed out; the source looks hung",
+            )
 
         # Update live progress after each batch
         if run_id is not None:
@@ -433,6 +444,8 @@ async def index_path_async(
     files = scan_directory(resolved)
     if batch_limit is not None:
         files = files[:batch_limit]
+    elif not force:
+        _check_not_shrunk(resolved, len(files))
 
     if not files:
         return []
@@ -465,10 +478,34 @@ async def index_path_async(
             files_errored=errored,
             total_chunks=total_chunks,
         )
+    except IndexAbortedError as exc:
+        db.abort_run(run_id, str(exc))
+        raise
     except Exception as exc:
         db.log_run_error(run_id, str(exc))
         raise
     return results
+
+
+def _check_not_shrunk(directory: Path, files_found: int) -> None:
+    """Abort when a directory suddenly holds far fewer files than last time.
+
+    An unmounted or half-listed source looks exactly like a tree whose files
+    were deleted. Refusing keeps a broken mount from passing as a quiet,
+    successful run; trove_reindex on the path skips this check.
+    """
+    previous = db.last_completed_run(str(directory))
+    if previous is None or previous["files_found"] < MIN_FOUND_BASELINE:
+        return
+    if files_found >= previous["files_found"] * MIN_FOUND_RATIO:
+        return
+    reason = (
+        f"found {files_found} files, under {MIN_FOUND_RATIO:.0%} of the "
+        f"{previous['files_found']} found by the last completed run; the source may "
+        "be unmounted. Run trove_reindex on the path if the files really were removed."
+    )
+    db.abort_run(db.start_run(str(directory), files_found), reason)
+    raise IndexAbortedError(str(directory), reason)
 
 
 def index_path(
