@@ -424,4 +424,5 @@ class TestOutOfCredit:
         assert vision.out_of_credit()
 
     def test_rate_limits_are_retried(self) -> None:
-        assert db.classify_error("Error code: 429 - Rate limit exceeded") == "transient"
+        assert db.classify_error("Error code: 429 - Too many requests") == "transient"
+        assert db.classify_error("/photos/IMG_0429.jpg: cannot identify image") == "permanent"
