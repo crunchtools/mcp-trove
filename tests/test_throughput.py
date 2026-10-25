@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import threading
@@ -392,6 +393,36 @@ class TestStreaming:
             results = await index_path_async(tmp_path)
 
         assert [r["status"] for r in results] == ["indexed"] * 4
+
+    async def test_overlapping_runs_embed_one_file_at_a_time(
+        self, tmp_path: Path, in_memory_db: sqlite3.Connection
+    ) -> None:
+        """Two index calls in the MCP server must not stack embeddings."""
+        for tree in ("one", "two"):
+            (tmp_path / tree).mkdir()
+            for n in range(3):
+                (tmp_path / tree / f"f{n}.txt").write_text(f"{tree} {n}")
+        running = 0
+        peak = 0
+        lock = threading.Lock()
+
+        def embed(texts: list[str]) -> list[list[float]]:
+            nonlocal running, peak
+            with lock:
+                running += 1
+                peak = max(peak, running)
+            time.sleep(0.05)
+            with lock:
+                running -= 1
+            return [[0.0] * 384 for _ in texts]
+
+        with patch.object(indexer_mod, "embed_texts", side_effect=embed):
+            first, second = await asyncio.gather(
+                index_path_async(tmp_path / "one"), index_path_async(tmp_path / "two")
+            )
+
+        assert [r["status"] for r in first + second] == ["indexed"] * 6
+        assert peak == 1
 
 
 class TestCacheDatabase:
