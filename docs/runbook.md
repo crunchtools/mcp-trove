@@ -51,7 +51,7 @@ The Nagios `Index run` check (`check_trove_run.sh`) reads `last_run.json`.
 Vectors from two models cannot be searched together, so the database records
 its model and refuses to open under another.
 
-1. Optionally measure first on a copy: `TROVE_DB=/tmp/copy.db TROVE_EMBEDDING_MODEL=<new> mcp-trove-crunchtools --reembed`, then `--eval queries.json` on both.
+1. Optionally measure first on a copy: `cp /data/backups/trove-YYYYMMDD.db /tmp/copy.db`, then `TROVE_DB=/tmp/copy.db TROVE_EMBEDDING_MODEL=<new> mcp-trove-crunchtools --reembed`, and `--eval queries.json` against each database.
 2. Set `TROVE_EMBEDDING_MODEL` for the indexer.
 3. Run `mcp-trove-crunchtools --reembed`. It rebuilds every vector from the
    stored chunks (nothing is re-read or re-captioned), resumes if killed, and
