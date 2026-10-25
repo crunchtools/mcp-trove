@@ -260,9 +260,7 @@ def _write_summary(status_file: str, summary: dict[str, Any]) -> bool:
         fd, partial = tempfile.mkstemp(dir=target.parent, prefix=".last_run.")
         with os.fdopen(fd, "w") as out:
             out.write(json.dumps(summary, indent=2) + "\n")
-        # Counts and statuses only, no content: monitoring reads it as
-        # another user.
-        Path(partial).chmod(0o644)
+        Path(partial).chmod(get_config().status_file_mode)
         Path(partial).replace(target)
     except OSError as exc:
         print(f"Cannot write {target}: {exc}", file=sys.stderr)

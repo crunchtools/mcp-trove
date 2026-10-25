@@ -14,9 +14,10 @@ reconstructed from their commit ranges in RT #1485.
 
 ### Changed
 
-- `last_run.json` is world-readable (it holds counts and statuses only) so a
-  monitor running as another user can read it, and records `vision_budget` and
-  `latest_backup` (name and time), since the backup directory is owner-only.
+- `TROVE_STATUS_FILE_MODE` (octal, default `600`) sets the mode of
+  `last_run.json`, so a monitor running as another user can be let in (`644`).
+  The summary records `vision_budget` and `latest_backup` (name and time),
+  since the backup directory is owner-only.
 
 ## [0.11.0] - 2026-10-25
 

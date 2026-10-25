@@ -428,17 +428,37 @@ class TestIndexEntryPoint:
 
 
 class TestSummaryForMonitoring:
-    def test_summary_is_readable_and_names_the_backup(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    @pytest.fixture
+    def env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         (tmp_path / "docs").mkdir()
         monkeypatch.setenv("TROVE_DB", str(tmp_path / "data" / "trove.db"))
         monkeypatch.setenv("TROVE_PATHS", str(tmp_path / "docs"))
+        return tmp_path / "data" / "last_run.json"
+
+    def test_summary_names_the_backup_and_budget(self, env: Path) -> None:
+        assert run_index() == 0
+
+        summary = json.loads(env.read_text())
+        assert summary["latest_backup"]["file"].startswith("trove-")
+        assert summary["vision_budget"] == 3000
+
+    def test_summary_is_private_by_default(self, env: Path) -> None:
+        assert run_index() == 0
+
+        assert env.stat().st_mode & 0o777 == 0o600
+
+    def test_summary_mode_can_open_it_to_a_monitor(
+        self, env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TROVE_STATUS_FILE_MODE", "644")
 
         assert run_index() == 0
 
-        status = tmp_path / "data" / "last_run.json"
-        assert status.stat().st_mode & 0o777 == 0o644
-        summary = json.loads(status.read_text())
-        assert summary["latest_backup"]["file"].startswith("trove-")
-        assert summary["vision_budget"] == 3000
+        assert env.stat().st_mode & 0o777 == 0o644
+
+    def test_no_backups_recorded_as_none(self, env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TROVE_BACKUP_KEEP", "0")
+
+        assert run_index() == 0
+
+        assert json.loads(env.read_text())["latest_backup"] is None
