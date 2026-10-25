@@ -58,6 +58,35 @@ TEXT_EXTENSIONS = {
     ".env",
 }
 
+# The part of TEXT_EXTENSIONS that is programs, configuration and logs,
+# indexed only with TROVE_INDEX_SOURCE_CODE.
+SOURCE_CODE_EXTENSIONS = {
+    ".py",
+    ".js",
+    ".ts",
+    ".go",
+    ".rs",
+    ".java",
+    ".c",
+    ".cpp",
+    ".h",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".fish",
+    ".sql",
+    ".r",
+    ".rb",
+    ".pl",
+    ".lua",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".env",
+    ".log",
+}
+
 PDF_EXTENSIONS = {".pdf"}
 # Below this many characters of text on its leading pages, a PDF is treated
 # as a scan and its first page is captioned through the vision backend.
@@ -92,9 +121,21 @@ def _get_supported_extensions() -> set[str]:
     from .vision import get_backend
 
     extensions = set(_BASE_EXTENSIONS)
+    if not get_config().index_source_code:
+        extensions -= SOURCE_CODE_EXTENSIONS
     if get_backend() is not None:
         extensions |= IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
     return extensions
+
+
+def is_source_code(path: Path) -> bool:
+    """Whether path is source code, configuration or a log (SOURCE_CODE_EXTENSIONS).
+
+    A dotfile such as .env has no suffix, so its whole name is checked too.
+    """
+    return (
+        path.suffix.lower() in SOURCE_CODE_EXTENSIONS or path.name.lower() in SOURCE_CODE_EXTENSIONS
+    )
 
 
 SUPPORTED_EXTENSIONS = _BASE_EXTENSIONS

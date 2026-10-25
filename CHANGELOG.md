@@ -10,6 +10,22 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-25
+
+### Changed
+
+- Source code, configuration and log files (`.py`, `.c`, `.h`, `.sh`, `.sql`,
+  `.toml`, `.ini`, `.conf`, `.env`, `.log` and the like) are no longer indexed
+  unless `TROVE_INDEX_SOURCE_CODE` is set. They are not documents, they are
+  slow to embed, and a `.env` or `.conf` can hold secrets. Entries already
+  indexed are removed on the next run.
+- `TROVE_EXCLUDE_PATTERNS` also matches directory names, so a pattern can
+  skip a whole tree; the walk does not descend into it. Indexed entries a
+  pattern now matches are removed on the next run.
+- The shrink gate's baseline is the number of files indexed under the path,
+  not the last run's count, so files removed by a configuration change do
+  not look like a dead mount.
+
 ## [0.13.0] - 2026-10-25
 
 ### Added

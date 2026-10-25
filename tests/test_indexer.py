@@ -90,7 +90,7 @@ class TestScanDirectory:
             (Path(tmpdir) / "file3.md").write_text("# Title")
 
             files = scan_directory(Path(tmpdir))
-            assert len(files) == 3
+            assert sorted(f.name for f in files) == ["file1.txt", "file3.md"]
 
     def test_scan_skips_excluded_patterns(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

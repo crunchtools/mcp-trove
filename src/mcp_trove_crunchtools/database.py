@@ -573,15 +573,6 @@ def abort_stale_runs(max_age_hours: int = STALE_RUN_HOURS) -> int:
     return cursor.rowcount
 
 
-def last_completed_run(path: str) -> dict[str, Any] | None:
-    """Return the newest completed run for a path, or None."""
-    return query_one(
-        "SELECT id, files_found, finished_at FROM index_runs "
-        "WHERE path = ? AND status = 'completed' ORDER BY id DESC LIMIT 1",
-        (path,),
-    )
-
-
 def quick_check() -> str:
     """Run PRAGMA quick_check and return its first line ('ok' when healthy)."""
     row = get_db().execute("PRAGMA quick_check").fetchone()
