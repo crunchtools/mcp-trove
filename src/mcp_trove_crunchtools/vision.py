@@ -351,11 +351,23 @@ class OllamaBackend:
 
 
 class _Budget:
-    """One run's count of vision API calls."""
+    """One run's count of vision API calls, and whether the provider ran out of credit."""
 
     def __init__(self) -> None:
         self.calls = 0
+        self.out_of_credit: str | None = None
         self.lock = threading.Lock()
+
+
+# What a provider says when the account cannot pay for the call. Recorded as
+# a per-file error, it would mark every remaining photo as a permanent
+# failure, never retried; instead the run stops captioning and defers them.
+_OUT_OF_CREDIT = (
+    "error code: 402",
+    "insufficient credit",
+    "insufficient_quota",
+    "payment required",
+)
 
 
 # Each run's budget travels in its context, which asyncio.to_thread copies
@@ -385,10 +397,16 @@ def calls_made() -> int:
     return _run_budget().calls
 
 
+def out_of_credit() -> bool:
+    """True when the provider refused a call this run for want of credit."""
+    return _run_budget().out_of_credit is not None
+
+
 def budget_spent() -> bool:
-    """True once the current run's vision budget is used up."""
+    """True once the current run can make no more vision calls: budget used, or no credit."""
     limit = get_config().vision_max_calls
-    return limit > 0 and _run_budget().calls >= limit
+    budget = _run_budget()
+    return budget.out_of_credit is not None or (limit > 0 and budget.calls >= limit)
 
 
 def _reserve_call(path: str) -> None:
@@ -396,9 +414,28 @@ def _reserve_call(path: str) -> None:
     limit = get_config().vision_max_calls
     budget = _run_budget()
     with budget.lock:
+        if budget.out_of_credit is not None:
+            raise VisionDeferredError(path, limit, budget.out_of_credit)
         if limit > 0 and budget.calls >= limit:
             raise VisionDeferredError(path, limit)
         budget.calls += 1
+
+
+def _call(path: Path, make: Callable[[], str]) -> str:
+    """Make one vision call; a refusal for want of credit defers the rest of the run."""
+    try:
+        return make()
+    except ExtractionError as exc:
+        message = str(exc).lower()
+        if not any(marker in message for marker in _OUT_OF_CREDIT):
+            raise
+        budget = _run_budget()
+        with budget.lock:
+            budget.out_of_credit = "the vision provider is out of credit"
+        logger.warning("Vision provider out of credit; deferring captions to the next run")
+        raise VisionDeferredError(
+            str(path), get_config().vision_max_calls, budget.out_of_credit
+        ) from exc
 
 
 def _cache_conn() -> sqlite3.Connection | None:
@@ -438,7 +475,7 @@ def _cached(path: Path, checksum: str | None, make: Callable[[], str]) -> str:
     conn = _cache_conn() if checksum else None
     if conn is None:
         _reserve_call(str(path))
-        return make()
+        return _call(path, make)
     model = get_config().vision_model
     with _CAPTION_LOCKS[hash(checksum) % len(_CAPTION_LOCKS)]:
         # A caption from another model is not reused: changing
@@ -449,7 +486,7 @@ def _cached(path: Path, checksum: str | None, make: Callable[[], str]) -> str:
         if row:
             return str(row[0])
         _reserve_call(str(path))
-        caption = make()
+        caption = _call(path, make)
         conn.execute(
             "INSERT OR REPLACE INTO captions (sha256, model, caption) VALUES (?, ?, ?)",
             (checksum, model, caption),

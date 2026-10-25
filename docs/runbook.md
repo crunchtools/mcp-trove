@@ -33,6 +33,7 @@ The Nagios `Index run` check (`check_trove_run.sh`) reads `last_run.json`.
 | CRITICAL: path `errors` | Over 10% of a path's files failed | `trove_quality` for the path; the messages say whether it is one bad format, the vision provider (quota, 402, 429) or the source |
 | CRITICAL: a `problems` entry | `quick_check` failed, the backup failed, or the mount probe failed | Database: see Restore below. Mount: remount, then rerun |
 | WARNING: errors over 5% | Many files failing, under the abort line | As for `errors` |
+| WARNING: vision provider out of credit | The account behind the vision key ran dry mid-run (`vision_out_of_credit` in the summary); the rest of the night's photos were deferred, not failed | Top up the account. The next run carries on where this one stopped |
 | WARNING: vision budget spent | The run hit `TROVE_VISION_MAX_CALLS_PER_RUN`; the rest was deferred, not failed | Expected while a new tree is backfilled. Otherwise something is re-captioning: check `vision_calls` over several nights |
 | WARNING: backup over 36 h old | No new daily copy | Free space on the volume; `TROVE_BACKUP_KEEP` above 0 |
 

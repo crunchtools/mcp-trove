@@ -73,13 +73,18 @@ class IndexAbortedError(TroveError):
 
 
 class VisionDeferredError(TroveError):
-    """Raised when this run's vision budget is spent; the file waits for the next run."""
+    """Raised when this run can make no more vision calls; the file waits for the next run.
 
-    def __init__(self, path: str, limit: int) -> None:
-        super().__init__(
-            f"Vision budget of {limit} calls for this run is spent; {path} is deferred "
-            "to the next run (TROVE_VISION_MAX_CALLS_PER_RUN)"
+    Either the run's TROVE_VISION_MAX_CALLS_PER_RUN is spent, or the provider
+    refused for want of credit (reason says which).
+    """
+
+    def __init__(self, path: str, limit: int, reason: str | None = None) -> None:
+        why = reason or (
+            f"the vision budget of {limit} calls for this run is spent "
+            "(TROVE_VISION_MAX_CALLS_PER_RUN)"
         )
+        super().__init__(f"{path} is deferred to the next run: {why}")
 
 
 class UnsupportedFileTypeError(TroveError):
