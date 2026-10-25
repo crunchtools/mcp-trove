@@ -8,7 +8,8 @@ from typing import Any
 from pydantic import ValidationError
 
 from .. import database as db
-from ..errors import InvalidInputError, PathNotFoundError
+from .. import vision
+from ..errors import InvalidInputError, PathNotFoundError, ReindexAllNotConfirmedError
 from ..indexer import index_path_async, remove_path
 from ..models import IndexParams, ReindexParams, RemoveParams
 
@@ -22,11 +23,13 @@ def _cap_details(results: list[dict[str, str | int]]) -> list[dict[str, str | in
     return [r for r in results if r.get("status") == "error"]
 
 
-async def trove_index(path: str) -> dict[str, Any]:
+async def trove_index(path: str, *, new_vision_budget: bool = True) -> dict[str, Any]:
     """Index a specific file or directory.
 
     Skips unchanged files based on checksum comparison.
     For directories, scans recursively and indexes supported files.
+    Each call gets a fresh vision budget unless new_vision_budget is False,
+    as in the --index run, which spreads one budget over all its paths.
     """
     try:
         path = IndexParams(path=path).path
@@ -37,11 +40,14 @@ async def trove_index(path: str) -> dict[str, Any]:
     if not target.exists():
         raise PathNotFoundError(path)
 
+    if new_vision_budget:
+        vision.reset_budget()
     results = await index_path_async(target, force=False)
 
     indexed = sum(1 for r in results if r["status"] == "indexed")
     skipped = sum(1 for r in results if r["status"] == "skipped")
     errored = sum(1 for r in results if r["status"] == "error")
+    deferred = sum(1 for r in results if r["status"] == "deferred")
     total_chunks = sum(int(r.get("chunk_count", 0)) for r in results)
 
     response: dict[str, Any] = {
@@ -49,6 +55,7 @@ async def trove_index(path: str) -> dict[str, Any]:
         "files_indexed": indexed,
         "files_skipped": skipped,
         "files_errored": errored,
+        "files_deferred": deferred,
         "total_chunks": total_chunks,
         "details": _cap_details(results),
     }
@@ -59,16 +66,22 @@ async def trove_index(path: str) -> dict[str, Any]:
     return response
 
 
-async def trove_reindex(path: str | None = None) -> dict[str, Any]:
+async def trove_reindex(path: str | None = None, force: bool = False) -> dict[str, Any]:
     """Force re-index ignoring checksums.
 
-    If no path given, reindexes all previously indexed files.
+    If no path given, reindexes all previously indexed files. That re-reads
+    the whole corpus (and re-captions media whose cached caption came from
+    another vision model), so it needs force=True.
     """
     try:
-        path = ReindexParams(path=path).path
+        params = ReindexParams(path=path, force=force)
     except ValidationError as exc:
         raise InvalidInputError(str(exc)) from exc
+    path = params.path
+    if not path and not params.force:
+        raise ReindexAllNotConfirmedError
 
+    vision.reset_budget()
     if path:
         target = Path(path).resolve()
         if not target.exists():

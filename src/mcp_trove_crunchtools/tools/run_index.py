@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .. import __version__
+from .. import __version__, vision
 from .. import database as db
 from ..config import get_config
 from ..errors import IndexAbortedError
@@ -48,6 +48,7 @@ def run_index() -> int:
     }
     started = time.monotonic()
 
+    vision.reset_budget()
     try:
         code = _preflight(summary)
         if code is None:
@@ -64,6 +65,7 @@ def run_index() -> int:
         traceback.print_exc()
         code = _report(summary, f"run failed: {exc}")
 
+    summary["vision_calls"] = vision.calls_made()
     summary["finished_at"] = _now()
     summary["duration_seconds"] = round(time.monotonic() - started)
     if code:
@@ -100,6 +102,9 @@ def _preflight(summary: dict[str, Any]) -> int | None:
     backup_problem = _backup(config.db_path, config.backup_dir, config.backup_keep)
     if backup_problem:
         _report(summary, backup_problem)
+    pruned = db.prune_captions()
+    if pruned:
+        print(f"Pruned {pruned} cached captions no longer in the index")
 
     if not config.index_paths:
         print("No TROVE_PATHS configured. Nothing to index.")
@@ -122,7 +127,7 @@ def _index_one(dir_path: str, entry: dict[str, Any]) -> bool:
         print(f"Skipping non-directory: {dir_path}", file=sys.stderr)
         return False
     try:
-        result = _run_async(trove_index(dir_path))
+        result = _run_async(trove_index(dir_path, new_vision_budget=False))
     except IndexAbortedError as exc:
         entry.update(status="aborted", message=str(exc))
         print(str(exc), file=sys.stderr)
@@ -135,13 +140,15 @@ def _index_one(dir_path: str, entry: dict[str, Any]) -> bool:
     indexed = result.get("files_indexed", 0)
     skipped = result.get("files_skipped", 0)
     errored = result.get("files_errored", 0)
+    deferred = result.get("files_deferred", 0)
     chunks = result.get("total_chunks", 0)
-    found = indexed + skipped + errored
+    found = indexed + skipped + errored + deferred
     entry.update(
         files_found=found,
         files_indexed=indexed,
         files_skipped=skipped,
         files_errored=errored,
+        files_deferred=deferred,
         total_chunks=chunks,
     )
     print(f"{dir_path}: {indexed} indexed, {skipped} skipped, {chunks} chunks")

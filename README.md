@@ -78,6 +78,9 @@ claude mcp add mcp-trove-crunchtools -- uvx mcp-trove-crunchtools
 | `TROVE_CHUNK_OVERLAP` | `200` | Overlap between chunks |
 | `TROVE_PDF_MAX_PAGES` | `5` | Pages indexed from the start of each PDF, enough to tell what the document is about while keeping memory flat on large manuals; `0` or negative indexes every page |
 | `TROVE_MAX_TEXT_CHARS` | `5000000` | Characters of extracted text kept per file; the rest is dropped with a warning so one huge document cannot flood a batch with chunks; must be positive, other values fall back to the default with a warning |
+| `TROVE_VISION_MAX_CALLS_PER_RUN` | `3000` | Vision API calls one index run may make; images and videos past it are deferred to the next run, not failed. `0` means no limit |
+| `TROVE_VISION_PDF_SCANS` | `false` | Caption the first page of scanned PDFs through the vision backend. Sends an image of the page to the provider, so it is opt-in |
+| `TROVE_VISION_FALLBACK_MODEL` | (none) | OpenRouter only: a second model tried when the first is rate limited. Unset by default, since the usual fallback costs more |
 | `TROVE_REQUIRE_MOUNT` | (none) | Mount point the index paths live on. `--index` checks it is mounted and answers a listing within 30 s before indexing, and fails the run otherwise |
 | `TROVE_MAX_EXTRACT_TIMEOUTS` | `5` | Timed-out file extractions after which a run aborts as a hung source |
 | `TROVE_BACKUP_DIR` | `<db dir>/backups` | Where `--index` keeps a daily `VACUUM INTO` copy of the database |
@@ -112,6 +115,9 @@ An `--index` run is built to be left alone:
 - A path aborts instead of indexing when its file count falls below half of its last completed run (an unmounted source looks like deleted files), or when extractions keep timing out (a hung source). `trove_reindex` on the path overrides the file-count check.
 - The exit code is `0` only when every path completed with no more than 10% of its files failing. Any other outcome exits `1`, so the systemd unit fails visibly. `TROVE_STATUS_FILE` records what happened, path by path.
 - The database records its embedding model and refuses to open under a different one, because vectors from two models cannot be searched together.
+- Vision captions are cached by file content (SHA-256) and vision model, so a renamed or copied photo reuses its caption. A cached caption is kept while its content is indexed and for 90 days after. A file that failed permanently, or 5 times transiently, is not retried until it changes; `trove_reindex` on its path retries it.
+- With `TROVE_VISION_PDF_SCANS=true`, a PDF whose first 5 pages hold under 20 characters of text (a scan) has its first page captioned through the vision backend, under the same budget and cache. It is off by default because it sends an image of the page to the vision provider.
+- `trove_reindex` with no path re-reads every file, so it requires `force=true`. Cached captions are reused unless `TROVE_VISION_MODEL` changed.
 
 ## License
 

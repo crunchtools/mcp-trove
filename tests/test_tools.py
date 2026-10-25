@@ -193,10 +193,16 @@ class TestIndexTools:
             path = f.name
 
         await trove_index(path)
-        result = await trove_reindex()
+        result = await trove_reindex(force=True)
         assert result["files_reindexed"] >= 1
 
         Path(path).unlink()
+
+    @pytest.mark.asyncio
+    async def test_reindex_all_needs_force(self, in_memory_db: sqlite3.Connection) -> None:
+        """A whole-index reindex re-captions every image, so it is never implicit."""
+        with pytest.raises(InvalidInputError, match="force=true"):
+            await trove_reindex()
 
     @pytest.mark.asyncio
     async def test_remove_file(self, in_memory_db: sqlite3.Connection) -> None:

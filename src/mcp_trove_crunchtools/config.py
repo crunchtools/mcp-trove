@@ -21,6 +21,7 @@ DEFAULT_VISION_TIMEOUT = 120  # seconds per vision API call
 DEFAULT_PDF_MAX_PAGES = 5  # leading PDF pages indexed; 0 or negative = all
 DEFAULT_MAX_TEXT_CHARS = 5_000_000  # extracted text kept per file (~6k chunks)
 DEFAULT_MAX_EXTRACT_TIMEOUTS = 5  # timed-out extractions before a run aborts
+DEFAULT_VISION_MAX_CALLS = 3000  # vision API calls per run (~$3); 0 = no limit
 DEFAULT_BACKUP_KEEP = 3  # nightly database copies kept; 0 disables backups
 DEFAULT_EXCLUDE_PATTERNS = "*.iso,*.zip,*.tar.gz,*.tar.bz2,*.7z,*.rar,*.exe,*.dll,*.bin,*.dat"
 
@@ -78,6 +79,21 @@ class Config:
         self.vision_timeout: int = int(
             os.environ.get("TROVE_VISION_TIMEOUT", str(DEFAULT_VISION_TIMEOUT))
         )
+        # Caps what one run can spend: files past the cap are deferred to the
+        # next run, not failed, so a big new folder is captioned over nights.
+        self.vision_max_calls: int = int(
+            os.environ.get("TROVE_VISION_MAX_CALLS_PER_RUN", str(DEFAULT_VISION_MAX_CALLS))
+        )
+        # OpenRouter only: a second model tried when the first is rate limited.
+        # Unset by default, because the usual fallback is a pricier tier.
+        self.vision_fallback_model: str = os.environ.get("TROVE_VISION_FALLBACK_MODEL", "")
+        # Off unless asked for: captioning a scanned PDF sends an image of its
+        # first page (a bank statement, a tax form) to the vision provider.
+        self.vision_pdf_scans: bool = os.environ.get("TROVE_VISION_PDF_SCANS", "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
 
     def _default_vision_model(self) -> str:
         """Return default model name based on vision backend."""

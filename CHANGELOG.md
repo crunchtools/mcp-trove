@@ -10,6 +10,31 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-25
+
+### Added
+
+- Caption cache keyed by file SHA-256 (`captions` table): renamed, moved or
+  duplicate images and videos reuse their caption instead of a new vision call.
+- `TROVE_VISION_MAX_CALLS_PER_RUN` (default `3000`): files past the budget are
+  `deferred` to the next run, not failed, and are not downloaded first.
+  `last_run.json` records `vision_calls` and per-path `files_deferred`.
+- `TROVE_VISION_PDF_SCANS` (default off): scanned PDFs (under 20 characters of
+  text on their first 5 pages) have their first page captioned through the
+  vision backend, rendered within 4 megapixels whatever the declared page size.
+- `--index` prunes cached captions whose content has been out of the index
+  for 90 days.
+- `trove_reindex(force=...)`: reindexing the whole index requires `force=true`.
+  Cached captions are reused unless they came from another vision model.
+
+### Changed
+
+- A file version that failed permanently, or 5 times transiently, is skipped
+  (`known_failure`) until its size or mtime changes; `trove_reindex` on the
+  path retries it. `index_errors` records `file_size` and `mtime` (schema 2).
+- The OpenRouter fallback model is no longer built in; set
+  `TROVE_VISION_FALLBACK_MODEL` to enable one.
+
 ## [0.10.0] - 2026-10-25
 
 ### Fixed

@@ -20,9 +20,10 @@ from . import database as db
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+from . import vision
 from .config import get_config
 from .embedder import embed_texts
-from .errors import IndexAbortedError
+from .errors import IndexAbortedError, VisionDeferredError
 from .extractor import detect_file_type, extract_text, is_supported
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ HASH_BUFFER_SIZE = 65536
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 # A directory whose file count falls below this share of its last completed
 # run is treated as a broken source (empty or half-mounted), not mass deletion.
+VISION_TYPES = {"image", "video"}
 MIN_FOUND_RATIO = 0.5
 MIN_FOUND_BASELINE = 100  # smaller trees are too noisy to judge
 EMBED_BATCH_SIZE = 256  # chunks embedded per call, matching fastembed's default batch
@@ -160,9 +162,15 @@ def _extract_one(
     Called from worker threads — no DB access here.
     """
     resolved = path.resolve()
+    # Once the run's vision budget is spent, a new image would be downloaded
+    # just to be deferred; defer it before reading a byte. That includes one
+    # whose caption is cached: finding out needs its checksum, which is the
+    # download. It is indexed on the next run.
+    if detect_file_type(resolved) in VISION_TYPES and vision.budget_spent():
+        raise VisionDeferredError(str(resolved), get_config().vision_max_calls)
     if not checksum:
         checksum = compute_checksum(resolved)
-    text = extract_text(resolved)
+    text = extract_text(resolved, checksum)
     file_type = detect_file_type(resolved)
     config = get_config()
     if len(text) > config.max_text_chars:
@@ -290,6 +298,7 @@ def _partition_unchanged(
     """Split files into skipped (unchanged) and needing extraction."""
     skipped: list[dict[str, str | int]] = []
     to_extract: list[tuple[Path, str, int, int | None, float]] = []
+    known = set() if force else db.known_failures()
     for fp in files:
         checksum, file_size, mtime, existing = _check_unchanged(fp)
         if existing and existing["checksum"] == checksum and not force:
@@ -301,6 +310,18 @@ def _partition_unchanged(
                     "path": str(fp.resolve()),
                     "status": "skipped",
                     "reason": "unchanged",
+                    "chunk_count": 0,
+                }
+            )
+        elif (str(fp), file_size, mtime) in known:
+            # This exact version keeps failing; retrying it every night costs
+            # a download and, for media, a vision call. It is retried when
+            # the file changes or on trove_reindex.
+            skipped.append(
+                {
+                    "path": str(fp.resolve()),
+                    "status": "skipped",
+                    "reason": "known_failure",
                     "chunk_count": 0,
                 }
             )
@@ -368,6 +389,16 @@ async def _extract_and_store_batched(
 
         # Store this batch immediately, then free extraction data
         for idx, raw in enumerate(extractions):
+            if isinstance(raw, VisionDeferredError):
+                results.append(
+                    {
+                        "path": str(chunk[idx][0]),
+                        "status": "deferred",
+                        "reason": "vision budget spent",
+                        "chunk_count": 0,
+                    }
+                )
+                continue
             if isinstance(raw, BaseException):
                 if isinstance(raw, TimeoutError):
                     timeouts += 1
@@ -383,6 +414,7 @@ async def _extract_and_store_batched(
                     err_path,
                     err_msg,
                     db.classify_error(err_msg),
+                    (chunk[idx][2], chunk[idx][4]),
                 )
                 results.append(
                     {

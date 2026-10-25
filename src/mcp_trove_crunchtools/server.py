@@ -25,7 +25,7 @@ READ_ONLY = {"readOnlyHint": True}
 
 mcp = FastMCP(
     "mcp-trove-crunchtools",
-    version="0.10.0",
+    version="0.11.0",
     instructions=(
         "Self-hosted local file indexing MCP server with semantic search. "
         "Index any local directory and search over contents using hybrid "
@@ -92,16 +92,18 @@ async def trove_index_tool(path: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def trove_reindex_tool(path: str | None = None) -> dict[str, Any]:
+async def trove_reindex_tool(path: str | None = None, force: bool = False) -> dict[str, Any]:
     """Force re-index ignoring checksums.
 
-    If no path given, reindexes all previously indexed files.
+    If no path given, reindexes all previously indexed files, which
+    re-reads the whole corpus: that requires force=true.
     Removes entries for files that no longer exist on disk.
 
     Args:
         path: Optional file or directory path (reindexes all if omitted)
+        force: Required to reindex everything when no path is given
     """
-    return await trove_reindex(path)
+    return await trove_reindex(path, force)
 
 
 @mcp.tool()

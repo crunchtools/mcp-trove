@@ -50,6 +50,7 @@ def _reset_singletons() -> Generator[None]:
     db_mod._tx_depth = 0
     embedder_mod._model = None
     vision_mod._backend = None
+    vision_mod.reset_budget()
     yield
     if db_mod._db is not None:
         db_mod._db.close()
