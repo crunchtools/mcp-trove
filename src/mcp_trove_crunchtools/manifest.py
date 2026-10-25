@@ -57,35 +57,37 @@ def manifest_file(directory: Path) -> Path | None:
 def load_manifest(directory: Path) -> dict[Path, Entry] | None:
     """Return {absolute path: Entry} for directory, or None to walk the tree instead.
 
-    None when manifests are off, the file is missing or older than
-    MANIFEST_MAX_AGE_HOURS, or it cannot be parsed; each case but the first
-    is logged, since the run then falls back to the slow walk.
+    None when manifests are off, or the file is missing, unreadable, over
+    MANIFEST_MAX_BYTES, older than MANIFEST_MAX_AGE_HOURS or malformed; each
+    case but the first is logged, since the run then falls back to the walk.
     """
     source = manifest_file(directory)
     if source is None:
         return None
-    if not source.exists():
-        logger.warning("No manifest at %s; walking %s", source, directory)
-        return None
-    source_stat = source.stat()
+    problem = _unusable(source)
+    if problem is None:
+        try:
+            return _entries(directory, json.loads(source.read_text()))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            problem = f"unreadable ({exc})"
+    logger.warning("Manifest %s is %s; walking %s", source, problem, directory)
+    return None
+
+
+def _unusable(source: Path) -> str | None:
+    """Why the manifest file cannot be used, judged from its metadata, or None."""
+    try:
+        source_stat = source.stat()
+    except FileNotFoundError:
+        return "missing"
+    except OSError as exc:
+        return f"unreadable ({exc})"
     if source_stat.st_size > MANIFEST_MAX_BYTES:
-        logger.warning(
-            "Manifest %s is %d bytes, over %d; walking %s",
-            source,
-            source_stat.st_size,
-            MANIFEST_MAX_BYTES,
-            directory,
-        )
-        return None
+        return f"{source_stat.st_size} bytes, over {MANIFEST_MAX_BYTES}"
     age_hours = (time.time() - source_stat.st_mtime) / 3600
     if age_hours > MANIFEST_MAX_AGE_HOURS:
-        logger.warning("Manifest %s is %.1fh old; walking %s", source, age_hours, directory)
-        return None
-    try:
-        return _entries(directory, json.loads(source.read_text()))
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        logger.warning("Manifest %s is unreadable (%s); walking %s", source, exc, directory)
-        return None
+        return f"{age_hours:.1f}h old"
+    return None
 
 
 def _entries(directory: Path, listing: object) -> dict[Path, Entry]:

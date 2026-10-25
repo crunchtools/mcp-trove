@@ -19,7 +19,7 @@ from . import database as db
 from . import vision
 from .config import get_config
 from .embedder import embed_texts
-from .errors import IndexAbortedError, VisionDeferredError
+from .errors import ExtractionError, IndexAbortedError, VisionDeferredError
 from .extractor import detect_file_type, extract_text, is_supported
 from .manifest import Entry, load_manifest
 
@@ -217,6 +217,13 @@ def _extract_one(
     # download. It is indexed on the next run.
     if detect_file_type(resolved) in VISION_TYPES and vision.budget_spent():
         raise VisionDeferredError(str(resolved), get_config().vision_max_calls)
+    # The scan's size can come from a manifest hours old; the limit is
+    # enforced on the file as it is now, before it is read.
+    file_size = resolved.stat().st_size
+    if file_size > MAX_FILE_SIZE:
+        raise ExtractionError(
+            str(resolved), f"{file_size} bytes is over the {MAX_FILE_SIZE} byte limit"
+        )
     if not checksum:
         checksum = compute_checksum(resolved)
     text = extract_text(resolved, checksum)

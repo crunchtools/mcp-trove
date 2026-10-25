@@ -212,6 +212,23 @@ class TestManifestPartition:
 
         assert [r["path"] for r in removed] == ["/gone.txt"]
 
+    async def test_file_grown_past_the_limit_is_not_read(
+        self, tmp_path: Path, manifests: Path, in_memory_db: sqlite3.Connection
+    ) -> None:
+        """The manifest says 5 bytes; the file is now over the limit."""
+        grown = tmp_path / "grown.txt"
+        with grown.open("wb") as out:
+            out.seek(indexer_mod.MAX_FILE_SIZE + 1)
+            out.write(b"\0")
+        _write_manifest(tmp_path, [_entry("grown.txt", size=5)])
+
+        with patch.object(indexer_mod, "extract_text") as extract:
+            results = await index_path_async(tmp_path)
+
+        extract.assert_not_called()
+        assert [r["status"] for r in results] == ["error"]
+        assert "over the" in str(results[0]["reason"])
+
     async def test_batch_limited_run_removes_nothing(
         self, tmp_path: Path, manifests: Path, in_memory_db: sqlite3.Connection
     ) -> None:
