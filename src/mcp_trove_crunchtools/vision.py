@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import contextvars
+import io
 import json
 import logging
 import os
@@ -190,6 +191,9 @@ class OpenAIBackend:
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 # Media is sent inline as a base64 data URL, so cap what we read into memory.
 OPENROUTER_MAX_MEDIA_BYTES = 20 * 1024 * 1024
+# A larger image is sent as a JPEG copy this many pixels on the long side.
+OVERSIZE_IMAGE_SIDE = 2048
+OVERSIZE_JPEG_QUALITY = 85
 
 
 def _read_secret(name: str) -> SecretStr:
@@ -271,14 +275,18 @@ class OpenRouterBackend:
 
     def caption(self, path: Path, file_type: str) -> str:
         size = path.stat().st_size
-        if size > OPENROUTER_MAX_MEDIA_BYTES:
+        oversize = size > OPENROUTER_MAX_MEDIA_BYTES
+        if oversize and file_type != "image":
             raise ExtractionError(
                 str(path),
                 f"{size} bytes exceeds the {OPENROUTER_MAX_MEDIA_BYTES} byte inline media limit",
             )
         self._get_client()  # a missing key fails before the file is read
-        mime = _get_mime(path)
-        data_url = f"data:{mime};base64," + _b64(path.read_bytes())
+        if oversize:
+            mime, payload = "image/jpeg", _downscaled(path)
+        else:
+            mime, payload = _get_mime(path), path.read_bytes()
+        data_url = f"data:{mime};base64," + _b64(payload)
         if file_type == "video":
             media = {"type": "video_url", "video_url": {"url": data_url}}
         else:
@@ -516,6 +524,26 @@ def describe_cached(path: Path, kind: str, checksum: str | None) -> str:
         raise ExtractionError(str(path), f"{get_config().vision_backend} cannot caption audio")
 
     return _cached(path, checksum, make)
+
+
+def _downscaled(path: Path) -> bytes:
+    """An image too big to send inline, as a JPEG at most OVERSIZE_IMAGE_SIDE a side.
+
+    A 24 MB panorama or RAW-sized JPEG was a permanent failure; the model
+    sees no more detail in it than in a 2048-pixel copy. draft() lets the
+    JPEG decoder scale down as it reads, so memory follows the copy.
+    """
+    from PIL import Image
+
+    try:
+        with Image.open(path) as image:
+            image.draft("RGB", (OVERSIZE_IMAGE_SIDE, OVERSIZE_IMAGE_SIDE))
+            image.thumbnail((OVERSIZE_IMAGE_SIDE, OVERSIZE_IMAGE_SIDE))
+            buffer = io.BytesIO()
+            image.convert("RGB").save(buffer, format="JPEG", quality=OVERSIZE_JPEG_QUALITY)
+    except Exception as exc:
+        raise ExtractionError(str(path), f"cannot downscale for captioning: {exc}") from exc
+    return buffer.getvalue()
 
 
 def _b64(payload: bytes) -> str:

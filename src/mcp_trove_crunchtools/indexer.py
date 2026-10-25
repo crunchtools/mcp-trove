@@ -20,7 +20,7 @@ from . import database as db
 from . import vision
 from .config import get_config
 from .embedder import embed_texts
-from .errors import ExtractionError, IndexAbortedError, VisionDeferredError
+from .errors import EmbeddingError, ExtractionError, IndexAbortedError, VisionDeferredError
 from .extractor import MAX_FILE_SIZE, classify, detect_file_type, extract_text
 from .filetypes import NAME_KIND, SAMPLED_KINDS, VISION_KINDS, is_media
 from .manifest import Entry, load_manifest
@@ -339,6 +339,11 @@ def _extract_one(
         # A file leaving its name-only entry has never been hashed.
         checksum = content_checksum(resolved, file_type, file_size, stat.st_mtime)
     text = extract_text(resolved, checksum, file_type)
+    # Text can hold lone UTF-16 surrogates: striprtf turns an RTF emoji's two
+    # \u escapes into a pair of them, and PDFs carry strays. The tokenizer
+    # rejects a whole batch over one, and SQLite will not store them. Pairs
+    # are rejoined into their character; strays become U+FFFD.
+    text = text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
     config = get_config()
     if len(text) > config.max_text_chars:
         logger.warning(
@@ -622,7 +627,11 @@ async def _settle(
         extraction = task.result()
         vectors = None
         if extraction["status"] != "skipped":
-            vectors = await asyncio.to_thread(_embed_chunks, extraction["chunks"])
+            # One file the model cannot embed fails that file, not its tree.
+            try:
+                vectors = await asyncio.to_thread(_embed_chunks, extraction["chunks"])
+            except EmbeddingError as exc:
+                return _record_failure(item, exc, run_id)
         return _store_one(extraction, vectors)
     result = _record_failure(item, error, run_id)
     if isinstance(error, TimeoutError):

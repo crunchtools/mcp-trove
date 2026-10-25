@@ -232,7 +232,27 @@ def _retry_media_failures(conn: sqlite3.Connection) -> None:
 
 # Applied in order; PRAGMA user_version records how many have run. Append
 # new steps, never reorder or remove one.
-MIGRATIONS = (_repair_partial_files, _add_error_versions, _retry_media_failures)
+def _retry_oversize_and_unembedded(conn: sqlite3.Connection) -> None:
+    """Migration 4: retry images too big to send inline, and text that failed to embed.
+
+    Up to 1.0.2 an image over 20 MB failed for good, and so did a file whose
+    text held lone surrogates; 1.0.3 downscales the one and repairs the other.
+    """
+    cursor = conn.execute(
+        "UPDATE index_errors SET resolved = 1, resolved_at = datetime('now') "
+        "WHERE resolved = 0 AND (error_message LIKE '%inline media limit%' "
+        "OR error_message LIKE '%Embedding failed%')"
+    )
+    if cursor.rowcount:
+        logger.warning("Cleared %d oversize and embedding failures for a retry", cursor.rowcount)
+
+
+MIGRATIONS = (
+    _repair_partial_files,
+    _add_error_versions,
+    _retry_media_failures,
+    _retry_oversize_and_unembedded,
+)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 

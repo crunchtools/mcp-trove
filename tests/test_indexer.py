@@ -12,6 +12,7 @@ import pytest
 
 from mcp_trove_crunchtools import database as db
 from mcp_trove_crunchtools import indexer as indexer_mod
+from mcp_trove_crunchtools.errors import EmbeddingError
 from mcp_trove_crunchtools.indexer import (
     MAX_FILE_SIZE,
     _extract_one,
@@ -292,3 +293,39 @@ class TestDeferredChecksum:
         row = db.query_one("SELECT checksum FROM files WHERE path = ?", (str(new_file.resolve()),))
         assert row is not None
         assert row["checksum"] == compute_checksum(new_file)
+
+
+REJECTED = "TextEncodeInput must be Union[...]"
+
+
+class TestUnencodableText:
+    """One file's text must never take down the tree it is in (RT #1542)."""
+
+    def test_rtf_emoji_survives(self, tmp_path: Path) -> None:
+        note = tmp_path / "note.rtf"
+        note.write_text(r"{\rtf1 Ride day \u-10179?\u-8704? and a stray \u-10240? here}")
+
+        extraction = _extract_one(note, "sum", note.stat().st_size, None)
+
+        text = "".join(extraction["chunks"])
+        assert "Ride day \U0001f600" in text
+        assert "stray � here" in text
+        text.encode("utf-8")  # no surrogates left
+
+    async def test_embedding_failure_fails_only_that_file(
+        self, tmp_path: Path, in_memory_db: sqlite3.Connection
+    ) -> None:
+        (tmp_path / "bad.txt").write_text("cannot embed")
+        (tmp_path / "good.txt").write_text("embeds fine")
+        real = indexer_mod._embed_chunks
+
+        def embed(chunks: list[str]) -> list[bytes]:
+            if chunks == ["cannot embed"]:
+                raise EmbeddingError(REJECTED)
+            return real(chunks)
+
+        with patch.object(indexer_mod, "_embed_chunks", side_effect=embed):
+            results = await indexer_mod.index_path_async(tmp_path)
+
+        statuses = {Path(str(r["path"])).name: r["status"] for r in results}
+        assert statuses == {"bad.txt": "error", "good.txt": "indexed"}
