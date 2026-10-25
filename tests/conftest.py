@@ -47,6 +47,7 @@ def _reset_singletons() -> Generator[None]:
     """Reset config, database, and embedder singletons between tests."""
     config_mod._config = None
     db_mod._db = None
+    db_mod._tx_depth = 0
     embedder_mod._model = None
     vision_mod._backend = None
     yield

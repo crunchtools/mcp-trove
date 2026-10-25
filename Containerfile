@@ -21,10 +21,18 @@ RUN dnf install -y gcc && dnf clean all
 WORKDIR /build
 RUN python3 -m venv /app/venv
 ENV PATH="/app/venv/bin:$PATH"
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md uv.lock ./
 COPY src/ ./src/
 
-RUN pip install --no-cache-dir ".[vision]"
+# Install exactly what uv.lock pins, hash-checked, then the project itself
+# without re-resolving. Building from the open ranges in pyproject.toml let
+# an upstream release change the image underneath us (pymupdf4llm 2.0,
+# RT #1542); dependency bumps now arrive as lockfile PRs through CI.
+RUN pip install --no-cache-dir uv==0.12.23 \
+    && uv export --frozen --no-dev --extra vision --no-emit-project -o requirements.txt \
+    && pip install --no-cache-dir --require-hashes -r requirements.txt \
+    && pip install --no-cache-dir --no-deps . \
+    && pip uninstall -y uv
 
 # Bake the embedding model in, so there is no HuggingFace fetch at runtime.
 # Cached at an explicit path rather than fastembed's default of
@@ -38,7 +46,7 @@ RUN python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='BA
 FROM quay.io/hummingbird/python:3.14
 
 LABEL name="mcp-trove-crunchtools" \
-      version="0.9.4" \
+      version="0.10.0" \
       summary="Self-hosted local file indexing MCP server with semantic search" \
       description="Index local directories and search over contents using hybrid vector + keyword search" \
       maintainer="crunchtools.com" \

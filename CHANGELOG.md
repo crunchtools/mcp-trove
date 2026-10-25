@@ -10,6 +10,38 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-25
+
+### Fixed
+
+- A file's record, chunks and vectors are written in one transaction, after
+  its embeddings are computed. A process killed part way (OOM, reboot) used to
+  leave a file row matching its checksum but missing chunks, skipped as
+  unchanged on every later run (RT #1542). A failed re-index now keeps the
+  file's previous entry.
+- Opening an older database removes rows left incomplete that way, once
+  (`PRAGMA user_version` 1), so the next run indexes them again.
+- Runs left `running` for more than 12 hours by a killed process are marked
+  `aborted` at the start of the next `--index` run.
+
+### Added
+
+- `--index` safety checks: `PRAGMA quick_check`, a daily `VACUUM INTO` backup
+  (`TROVE_BACKUP_DIR`, `TROVE_BACKUP_KEEP`), a mount probe
+  (`TROVE_REQUIRE_MOUNT`), a file-count drop check per path, and an abort after
+  `TROVE_MAX_EXTRACT_TIMEOUTS` timed-out extractions.
+- `--index` exits non-zero when any path fails, aborts, is missing or has more
+  than 10% of its files fail, and writes a per-path summary to
+  `TROVE_STATUS_FILE`.
+- A `meta` table records the embedding model and chunking settings; a
+  database built with a different embedding model is refused.
+- `PRAGMA busy_timeout=30000` and `synchronous=NORMAL`.
+
+### Changed
+
+- The container installs the exact, hash-checked versions in `uv.lock`
+  instead of resolving `pyproject.toml` ranges at build time.
+
 ## [0.9.4] - 2026-10-25
 
 ### Changed

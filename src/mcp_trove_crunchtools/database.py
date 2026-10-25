@@ -6,17 +6,32 @@ Uses sqlite-vec for vector search and FTS5 for keyword search.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
-from typing import Any
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any
 
 import sqlite_vec
 
+from . import __version__
 from .config import get_config
 from .embedder import get_vector_dims
-from .errors import DimensionMismatchError
+from .errors import DimensionMismatchError, EmbeddingModelMismatchError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+logger = logging.getLogger(__name__)
 
 _db: sqlite3.Connection | None = None
+# Depth of the open transaction() block; while it is above zero, the helpers
+# below leave committing to the block.
+_tx_depth = 0
+
+# Schema version _migrate records in PRAGMA user_version; bump it with each new step.
+SCHEMA_VERSION = 1
+STALE_RUN_HOURS = 12
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
@@ -86,6 +101,11 @@ CREATE TABLE IF NOT EXISTS index_errors (
 );
 CREATE INDEX IF NOT EXISTS idx_errors_path ON index_errors(path);
 CREATE INDEX IF NOT EXISTS idx_errors_resolved ON index_errors(resolved);
+
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 VEC_TABLE_SQL = """
@@ -109,6 +129,62 @@ def _ensure_vec_table(conn: sqlite3.Connection) -> None:
         raise DimensionMismatchError(int(match.group(1)), model_name, model_dims)
 
 
+def _check_meta(conn: sqlite3.Connection) -> None:
+    """Record what built the index, and refuse a different embedding model.
+
+    The dimension check above cannot tell two 384-dimension models apart;
+    their vectors would mix silently and ruin search. Chunking settings only
+    change files indexed from now on, so a change is logged, not refused.
+    """
+    config = get_config()
+    current = {
+        "embedding_model": config.embedding_model,
+        "chunk_size": str(config.chunk_size),
+        "chunk_overlap": str(config.chunk_overlap),
+    }
+    stored = {row[0]: row[1] for row in conn.execute("SELECT key, value FROM meta")}
+    db_model = stored.get("embedding_model")
+    if db_model is not None and db_model != current["embedding_model"]:
+        raise EmbeddingModelMismatchError(db_model, current["embedding_model"])
+    for key in ("chunk_size", "chunk_overlap"):
+        if key in stored and stored[key] != current[key]:
+            logger.warning(
+                "%s changed from %s to %s; files indexed before keep their old chunks",
+                key,
+                stored[key],
+                current[key],
+            )
+    current["app_version"] = __version__
+    conn.executemany(
+        "INSERT INTO meta (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        list(current.items()),
+    )
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring the schema and data up to SCHEMA_VERSION, once per version."""
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if version < 1:
+        # Before 0.10.0 a file row was committed before its chunks, so a
+        # process killed mid-file (OOM, reboot) left a row that matched its
+        # checksum and was skipped forever with no or partial chunks
+        # (RT #1542). Drop those rows so the next run indexes them again.
+        # Files that really have no text are re-extracted once, which is cheap.
+        broken = [
+            row[0]
+            for row in conn.execute(
+                "SELECT f.id FROM files f WHERE f.chunk_count = 0 "
+                "OR f.chunk_count > (SELECT count(*) FROM chunks c WHERE c.file_id = f.id)"
+            )
+        ]
+        for file_id in broken:
+            _delete_file_rows(conn, file_id)
+        if broken:
+            logger.warning("Removed %d incompletely indexed files for re-indexing", len(broken))
+    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+
 def _migrate_add_mtime(conn: sqlite3.Connection) -> None:
     """Add mtime column to files table if it doesn't exist (migration)."""
     cursor = conn.execute("PRAGMA table_info(files)")
@@ -127,6 +203,10 @@ def get_db(db_path: str | None = None) -> sqlite3.Connection:
         _db = sqlite3.connect(path)
         _db.row_factory = sqlite3.Row
         _db.execute("PRAGMA journal_mode=WAL")
+        # The MCP server and the nightly indexer write to the same file.
+        _db.execute("PRAGMA busy_timeout=30000")
+        # Safe in WAL mode: a crash can lose the last commits, never corrupt.
+        _db.execute("PRAGMA synchronous=NORMAL")
         _db.execute("PRAGMA foreign_keys=ON")
         _db.enable_load_extension(True)
         sqlite_vec.load(_db)
@@ -134,13 +214,52 @@ def get_db(db_path: str | None = None) -> sqlite3.Connection:
         _db.executescript(SCHEMA)
         try:
             _ensure_vec_table(_db)
+            _check_meta(_db)
         except Exception:
             _db.close()
             _db = None
             raise
         _migrate_add_mtime(_db)
+        _migrate(_db)
         _db.commit()
     return _db
+
+
+@contextmanager
+def transaction() -> Iterator[None]:
+    """Run the enclosed writes as one transaction, committed or rolled back whole.
+
+    The outermost block begins and commits. A nested block is a savepoint:
+    if it fails, its own writes are undone even when the caller catches the
+    error and carries on. A file's rows go in one transaction so a process
+    killed part way leaves nothing behind.
+    """
+    global _tx_depth
+    db = get_db()
+    savepoint = f"trove_tx_{_tx_depth}"
+    db.execute("BEGIN IMMEDIATE" if _tx_depth == 0 else f"SAVEPOINT {savepoint}")
+    _tx_depth += 1
+    try:
+        yield
+    except BaseException:
+        _tx_depth -= 1
+        if _tx_depth == 0:
+            db.rollback()
+        else:
+            db.execute(f"ROLLBACK TO {savepoint}")
+            db.execute(f"RELEASE {savepoint}")
+        raise
+    _tx_depth -= 1
+    if _tx_depth == 0:
+        db.commit()
+    else:
+        db.execute(f"RELEASE {savepoint}")
+
+
+def _commit(db: sqlite3.Connection) -> None:
+    """Commit, unless a transaction() block will commit for us."""
+    if _tx_depth == 0:
+        db.commit()
 
 
 def query(sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
@@ -162,7 +281,7 @@ def execute(sql: str, params: tuple[Any, ...] = ()) -> int:
     """Execute an INSERT/UPDATE/DELETE and return lastrowid."""
     db = get_db()
     cursor = db.execute(sql, params)
-    db.commit()
+    _commit(db)
     return cursor.lastrowid or 0
 
 
@@ -170,7 +289,7 @@ def execute_many(sql: str, params_list: list[tuple[Any, ...]]) -> None:
     """Execute a statement with multiple parameter sets."""
     db = get_db()
     db.executemany(sql, params_list)
-    db.commit()
+    _commit(db)
 
 
 def insert_file(
@@ -213,12 +332,19 @@ def update_file_mtime(file_id: int, mtime: float) -> None:
 def delete_file_data(file_id: int) -> None:
     """Delete all chunks and vectors for a file, then the file record."""
     db = get_db()
-    chunk_ids = [row["id"] for row in query("SELECT id FROM chunks WHERE file_id = ?", (file_id,))]
+    _delete_file_rows(db, file_id)
+    _commit(db)
+
+
+def _delete_file_rows(conn: sqlite3.Connection, file_id: int) -> None:
+    """Delete a file's vectors, chunks and record, without committing."""
+    chunk_ids = [
+        row[0] for row in conn.execute("SELECT id FROM chunks WHERE file_id = ?", (file_id,))
+    ]
     for chunk_id in chunk_ids:
-        db.execute("DELETE FROM chunks_vec WHERE chunk_id = ?", (chunk_id,))
-    db.execute("DELETE FROM chunks WHERE file_id = ?", (file_id,))
-    db.execute("DELETE FROM files WHERE id = ?", (file_id,))
-    db.commit()
+        conn.execute("DELETE FROM chunks_vec WHERE chunk_id = ?", (chunk_id,))
+    conn.execute("DELETE FROM chunks WHERE file_id = ?", (file_id,))
+    conn.execute("DELETE FROM files WHERE id = ?", (file_id,))
 
 
 def insert_chunk(
@@ -235,14 +361,15 @@ def insert_chunk(
     )
 
 
-def insert_vector(chunk_id: int, embedding: list[float]) -> None:
-    """Insert a vector embedding for a chunk."""
+def insert_vector(chunk_id: int, embedding: list[float] | bytes) -> None:
+    """Insert a vector embedding (floats, or already serialized float32) for a chunk."""
     db = get_db()
+    blob = embedding if isinstance(embedding, bytes) else sqlite_vec.serialize_float32(embedding)
     db.execute(
         "INSERT INTO chunks_vec (chunk_id, embedding) VALUES (?, ?)",
-        (chunk_id, sqlite_vec.serialize_float32(embedding)),
+        (chunk_id, blob),
     )
-    db.commit()
+    _commit(db)
 
 
 def search_vectors(
@@ -378,6 +505,52 @@ def log_run_error(run_id: int, error_message: str) -> None:
     )
 
 
+def abort_run(run_id: int, reason: str) -> None:
+    """Mark an indexing run as stopped by a safety check."""
+    execute(
+        "UPDATE index_runs SET finished_at = datetime('now'), status = 'aborted', "
+        "error_message = ? WHERE id = ?",
+        (reason, run_id),
+    )
+
+
+def abort_stale_runs(max_age_hours: int = STALE_RUN_HOURS) -> int:
+    """Mark runs still 'running' after max_age_hours as aborted.
+
+    A killed process never finishes its run row; left alone it reads as
+    running forever and hides that the run died. Returns the rows changed.
+    """
+    db = get_db()
+    cursor = db.execute(
+        "UPDATE index_runs SET finished_at = datetime('now'), status = 'aborted', "
+        "error_message = 'process exited without finishing the run' "
+        "WHERE status = 'running' AND started_at < datetime('now', ?)",
+        (f"-{max_age_hours} hours",),
+    )
+    _commit(db)
+    return cursor.rowcount
+
+
+def last_completed_run(path: str) -> dict[str, Any] | None:
+    """Return the newest completed run for a path, or None."""
+    return query_one(
+        "SELECT id, files_found, finished_at FROM index_runs "
+        "WHERE path = ? AND status = 'completed' ORDER BY id DESC LIMIT 1",
+        (path,),
+    )
+
+
+def quick_check() -> str:
+    """Run PRAGMA quick_check and return its first line ('ok' when healthy)."""
+    row = get_db().execute("PRAGMA quick_check").fetchone()
+    return str(row[0])
+
+
+def backup_to(dest: str) -> None:
+    """Write a compacted, consistent copy of the database to dest."""
+    get_db().execute("VACUUM INTO ?", (dest,))
+
+
 _TRANSIENT_PATTERNS = (
     "connection reset",
     "dns",
@@ -424,7 +597,7 @@ def resolve_errors(path: str) -> int:
         "WHERE path = ? AND resolved = 0",
         (path,),
     )
-    db.commit()
+    _commit(db)
     return cursor.rowcount
 
 

@@ -78,6 +78,11 @@ claude mcp add mcp-trove-crunchtools -- uvx mcp-trove-crunchtools
 | `TROVE_CHUNK_OVERLAP` | `200` | Overlap between chunks |
 | `TROVE_PDF_MAX_PAGES` | `5` | Pages indexed from the start of each PDF, enough to tell what the document is about while keeping memory flat on large manuals; `0` or negative indexes every page |
 | `TROVE_MAX_TEXT_CHARS` | `5000000` | Characters of extracted text kept per file; the rest is dropped with a warning so one huge document cannot flood a batch with chunks; must be positive, other values fall back to the default with a warning |
+| `TROVE_REQUIRE_MOUNT` | (none) | Mount point the index paths live on. `--index` checks it is mounted and answers a listing within 30 s before indexing, and fails the run otherwise |
+| `TROVE_MAX_EXTRACT_TIMEOUTS` | `5` | Timed-out file extractions after which a run aborts as a hung source |
+| `TROVE_BACKUP_DIR` | `<db dir>/backups` | Where `--index` keeps a daily `VACUUM INTO` copy of the database |
+| `TROVE_BACKUP_KEEP` | `3` | Daily database copies kept; `0` disables backups |
+| `TROVE_STATUS_FILE` | `<db dir>/last_run.json` | Summary of the last `--index` run, for monitoring |
 | `TROVE_VISION_BACKEND` | `none` | Vision captioning backend: `gemini`, `openai`, `openrouter`, `ollama`, or `none` to disable |
 | `TROVE_VISION_MODEL` | per backend | Vision model. Defaults to `gemini-2.5-flash`, `gpt-4o-mini`, `google/gemini-3.1-flash-lite` (openrouter) or `llava` depending on the backend; empty when disabled |
 | `TROVE_VISION_PROMPT` | (see below) | Caption prompt sent with each image |
@@ -99,6 +104,14 @@ Set up a systemd timer to keep your index fresh:
 ```bash
 TROVE_PATHS=~/Documents:~/AutoSync mcp-trove-crunchtools --index
 ```
+
+An `--index` run is built to be left alone:
+
+- Each file is stored in one transaction, so a run killed part way (OOM, reboot) leaves no half-indexed file behind.
+- Before indexing, it runs `PRAGMA quick_check`, keeps a daily backup, marks runs abandoned for more than 12 hours as `aborted`, and probes `TROVE_REQUIRE_MOUNT`.
+- A path aborts instead of indexing when its file count falls below half of its last completed run (an unmounted source looks like deleted files), or when extractions keep timing out (a hung source). `trove_reindex` on the path overrides the file-count check.
+- The exit code is `0` only when every path completed with no more than 10% of its files failing. Any other outcome exits `1`, so the systemd unit fails visibly. `TROVE_STATUS_FILE` records what happened, path by path.
+- The database records its embedding model and refuses to open under a different one, because vectors from two models cannot be searched together.
 
 ## License
 
