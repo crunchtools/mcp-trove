@@ -247,11 +247,26 @@ def _retry_oversize_and_unembedded(conn: sqlite3.Connection) -> None:
         logger.warning("Cleared %d oversize and embedding failures for a retry", cursor.rowcount)
 
 
+def _retry_refused_reads(conn: sqlite3.Connection) -> None:
+    """Migration 5: retry files the mount refused with EPERM.
+
+    Up to 1.0.3 "Operation not permitted" was a permanent failure, though
+    the pCloud mount returns it in bursts for files it serves fine later.
+    """
+    cursor = conn.execute(
+        "UPDATE index_errors SET resolved = 1, resolved_at = datetime('now') "
+        "WHERE resolved = 0 AND error_message LIKE '%Operation not permitted%'"
+    )
+    if cursor.rowcount:
+        logger.warning("Cleared %d refused reads for a retry", cursor.rowcount)
+
+
 MIGRATIONS = (
     _repair_partial_files,
     _add_error_versions,
     _retry_media_failures,
     _retry_oversize_and_unembedded,
+    _retry_refused_reads,
 )
 SCHEMA_VERSION = len(MIGRATIONS)
 
@@ -675,6 +690,9 @@ _TRANSIENT_PATTERNS = (
     "network unreachable",
     "error code: 429",
     "rate limit",
+    # The pCloud FUSE mount refuses reads in bursts with EPERM; the same
+    # files open fine minutes later.
+    "operation not permitted",
 )
 
 
