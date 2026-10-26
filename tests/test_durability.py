@@ -488,3 +488,24 @@ class TestRetryMigration:
         db.get_db(path)
 
         assert db.known_failures() == {("/p/scan.pdf", 9, 1.0)}
+
+
+class TestRefusedReads:
+    MESSAGE = "[Errno 1] Operation not permitted: '/pcloud/a.mp3'"
+
+    def test_eperm_is_transient(self) -> None:
+        assert db.classify_error(self.MESSAGE) == "transient"
+
+    def test_recorded_refusals_released(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "trove.db")
+        db.get_db(path)
+        db.insert_error(None, "/pcloud/a.mp3", self.MESSAGE, "permanent", (9, 1.0))
+        db.insert_error(None, "/p/scan.pdf", "broken", "permanent", (9, 1.0))
+        db.get_db().execute("PRAGMA user_version = 4")
+        db.get_db().commit()
+        db.get_db().close()
+        db._db = None
+
+        db.get_db(path)
+
+        assert db.known_failures() == {("/p/scan.pdf", 9, 1.0)}

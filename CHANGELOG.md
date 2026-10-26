@@ -10,6 +10,15 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-10-25
+
+### Fixed
+
+- The pCloud mount refuses reads in bursts with "Operation not permitted",
+  for files it serves fine minutes later; 1,413 songs in one run were
+  recorded as permanent failures and would never have been retried. EPERM
+  is now a transient failure, and migration 5 releases the recorded ones.
+
 ## [1.0.3] - 2026-10-25
 
 ### Fixed
