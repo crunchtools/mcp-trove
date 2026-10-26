@@ -261,12 +261,31 @@ def _retry_refused_reads(conn: sqlite3.Connection) -> None:
         logger.warning("Cleared %d refused reads for a retry", cursor.rowcount)
 
 
+def _retry_unseekable_media(conn: sqlite3.Connection) -> None:
+    """Migration 6: retry videos and audio whose sound could not be seeked.
+
+    Up to 1.0.5 a file with no index for its sound, as old camcorder AVIs
+    are, failed with EPERM on every try; 1.0.6 takes its clip from the start.
+    """
+    suffixes = sorted(VIDEO_EXTENSIONS | AUDIO_EXTENSIONS)
+    conditions = " OR ".join("lower(path) LIKE ?" for _ in suffixes)
+    cursor = conn.execute(
+        "UPDATE index_errors SET resolved = 1, resolved_at = datetime('now') "
+        "WHERE resolved = 0 AND error_message LIKE '%Operation not permitted%' "
+        f"AND ({conditions})",
+        [f"%{suffix}" for suffix in suffixes],
+    )
+    if cursor.rowcount:
+        logger.warning("Cleared %d unseekable media failures for a retry", cursor.rowcount)
+
+
 MIGRATIONS = (
     _repair_partial_files,
     _add_error_versions,
     _retry_media_failures,
     _retry_oversize_and_unembedded,
     _retry_refused_reads,
+    _retry_unseekable_media,
 )
 SCHEMA_VERSION = len(MIGRATIONS)
 

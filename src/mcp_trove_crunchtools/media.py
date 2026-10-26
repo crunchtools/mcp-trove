@@ -123,6 +123,10 @@ def sample(path: Path) -> MediaSample:
     A song's embedded cover art is a one-frame "video" stream marked
     attached_pic; seeking in it fails with EPERM, which failed every song
     with art. It is not sampled: the song is described from its sound.
+
+    Old camcorder AVIs keep no index for their sound, so seeking in it
+    fails with EPERM too and leaves the demuxer unusable. The clip is then
+    taken from the start of the file, opened again.
     """
     import av
 
@@ -138,10 +142,28 @@ def sample(path: Path) -> MediaSample:
         )
         if picture is not None:
             result.frames = _frames(container, picture, result.duration)
-    with av.open(str(path)) as container:
-        if container.streams.audio:
-            result.audio = _audio_clip(container, container.streams.audio[0], result.duration)
+    for start in dict.fromkeys((_clip_start(result.duration), 0.0)):
+        with av.open(str(path)) as container:
+            if not container.streams.audio:
+                break
+            stream = container.streams.audio[0]
+            if start and stream.time_base is not None and not _seek(container, stream, start):
+                continue
+            result.audio = _audio_clip(container, stream)
+            break
     return result
+
+
+def _seek(container: Any, stream: Any, seconds: float) -> bool:
+    """Seek stream to the keyframe at or before seconds; False if refused."""
+    import av
+
+    try:
+        container.seek(int(seconds / stream.time_base), stream=stream, backward=True)
+    except av.FFmpegError as error:
+        logger.info("Cannot seek in the %s stream: %s", stream.type, error)
+        return False
+    return True
 
 
 def _frames(container: Any, stream: Any, duration: float | None) -> list[bytes]:
@@ -160,7 +182,8 @@ def _frames(container: Any, stream: Any, duration: float | None) -> list[bytes]:
     frames: list[bytes] = []
     for index in range(FRAME_COUNT):
         target = duration * (0.05 + 0.9 * index / max(1, FRAME_COUNT - 1))
-        container.seek(int(target / stream.time_base), stream=stream, backward=True)
+        if not _seek(container, stream, target):
+            break  # a refused seek leaves the demuxer unusable; keep what we have
         frame = _next_frame(container, stream)
         if frame is not None:
             frames.append(_jpeg(frame))
@@ -203,15 +226,17 @@ def _jpeg(frame: Any) -> bytes:
     return buffer.getvalue()
 
 
-def _audio_clip(container: Any, stream: Any, duration: float | None) -> bytes | None:
-    """AUDIO_CLIP_SECONDS of sound from AUDIO_CLIP_START, as mono MP3."""
+def _clip_start(duration: float | None) -> float:
+    """Where the audio clip starts: AUDIO_CLIP_START of a long file, else 0."""
+    if duration and duration > AUDIO_CLIP_SECONDS * 2:
+        return duration * AUDIO_CLIP_START
+    return 0.0
+
+
+def _audio_clip(container: Any, stream: Any) -> bytes | None:
+    """AUDIO_CLIP_SECONDS of sound from where the demuxer stands, as mono MP3."""
     import av
 
-    start = 0.0
-    if duration and duration > AUDIO_CLIP_SECONDS * 2:
-        start = duration * AUDIO_CLIP_START
-    if start and stream.time_base is not None:
-        container.seek(int(start / stream.time_base), stream=stream, backward=True)
     output = io.BytesIO()
     resampler = av.AudioResampler(format="s16p", layout="mono", rate=AUDIO_SAMPLE_RATE)
     with av.open(output, "w", format="mp3") as out:

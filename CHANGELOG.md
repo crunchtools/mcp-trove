@@ -10,6 +10,16 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-10-26
+
+### Fixed
+
+- Old camcorder videos (MJPEG/PCM AVIs and 3GPs) failed with "Operation not
+  permitted": they keep no index for their sound, so seeking to the audio
+  clip's start fails. The clip is now taken from the start of the file, and
+  a refused frame seek keeps the frames already taken. Their recorded
+  failures are cleared for a retry.
+
 ## [1.0.5] - 2026-10-25
 
 ### Fixed
