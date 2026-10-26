@@ -509,3 +509,22 @@ class TestRefusedReads:
         db.get_db(path)
 
         assert db.known_failures() == {("/p/scan.pdf", 9, 1.0)}
+
+
+class TestUnseekableMedia:
+    MESSAGE = "[Errno 1] Operation not permitted: '/pcloud/clip.avi'"
+
+    def test_media_refusals_released(self, tmp_path: Path) -> None:
+        """1.0.6 clips unseekable sound from the start, so those files get a retry."""
+        path = str(tmp_path / "trove.db")
+        db.get_db(path)
+        db.insert_error(None, "/pcloud/clip.AVI", self.MESSAGE, "permanent", (9, 1.0))
+        db.insert_error(None, "/p/notes.txt", self.MESSAGE, "permanent", (9, 1.0))
+        db.get_db().execute("PRAGMA user_version = 5")
+        db.get_db().commit()
+        db.get_db().close()
+        db._db = None
+
+        db.get_db(path)
+
+        assert db.known_failures() == {("/p/notes.txt", 9, 1.0)}

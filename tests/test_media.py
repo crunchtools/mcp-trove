@@ -176,6 +176,32 @@ class TestSampling:
         assert sample.frames == []
         assert sample.audio
 
+    def test_refused_seek_is_reported_not_raised(self) -> None:
+        import av
+
+        container = MagicMock()
+        container.seek.side_effect = av.PermissionError(1, "Operation not permitted")
+
+        assert media._seek(container, MagicMock(time_base=0.001), 5.0) is False
+
+    def test_unseekable_sound_is_clipped_from_the_start(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Old camcorder AVIs refuse seeks in their sound; 12 clips failed on it."""
+        sought: list[str] = []
+
+        def refuse_audio(_container: Any, stream: Any, _seconds: float) -> bool:
+            sought.append(stream.type)
+            return bool(stream.type != "audio")
+
+        monkeypatch.setattr(media, "_seek", refuse_audio)
+
+        sample = media.sample(_make_clip(tmp_path / "camcorder.mp4", 60))
+
+        assert sample.audio
+        assert len(sample.frames) == media.FRAME_COUNT
+        assert sought.count("audio") == 1
+
     def test_packets_the_decoder_rejects_are_skipped(self) -> None:
         """MPEG-PS and Theora files rejected their first packets after a seek."""
         import av
