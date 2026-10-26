@@ -82,6 +82,27 @@ def _write_tone(container: Any, stream: Any, seconds: int, quiet_until: int) -> 
         container.mux(packet)
 
 
+def _make_song_with_art(path: Path, seconds: int = 30) -> Path:
+    """An mp3 with embedded cover art, as ripped albums carry it."""
+    import av
+    from PIL import Image
+
+    cover = io.BytesIO()
+    Image.new("RGB", (64, 64), "red").save(cover, "PNG")
+    with av.open(str(path), "w", format="mp3") as container:
+        audio = container.add_stream("mp3", rate=RATE, layout="mono")
+        art = container.add_stream("png")
+        art.width = art.height = 64
+        art.pix_fmt = "rgb24"
+        art.disposition = av.stream.Disposition.attached_pic
+        packet = av.Packet(cover.getvalue())
+        packet.stream = art
+        packet.pts = packet.dts = 0
+        container.mux(packet)
+        _write_tone(container, audio, seconds, 0)
+    return path
+
+
 @pytest.fixture
 def openrouter(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     """An OpenRouter backend whose API client is a mock answering every request."""
@@ -148,6 +169,13 @@ class TestSampling:
         assert sample.audio
         assert sample.tags["title"] == "Basement training"
 
+    def test_cover_art_is_not_sampled(self, tmp_path: Path) -> None:
+        """Seeking in an attached picture fails with EPERM; 1,700 songs failed on it."""
+        sample = media.sample(_make_song_with_art(tmp_path / "song.mp3"))
+
+        assert sample.frames == []
+        assert sample.audio
+
     def test_packets_the_decoder_rejects_are_skipped(self) -> None:
         """MPEG-PS and Theora files rejected their first packets after a seek."""
         import av
@@ -208,6 +236,16 @@ class TestCaptioning:
         config = get_config()
         monkeypatch.setattr(config, "index_types", config.index_types | {"audio"})
         extract_text(_make_clip(tmp_path / "song.mp3", picture=False), "fp:abc")
+
+        kinds = [part["type"] for part in _request_content(openrouter)]
+        assert kinds == ["text", "input_audio"]
+
+    def test_song_with_cover_art_sends_only_sound(
+        self, tmp_path: Path, openrouter: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config = get_config()
+        monkeypatch.setattr(config, "index_types", config.index_types | {"audio"})
+        extract_text(_make_song_with_art(tmp_path / "song.mp3"), "fp:abc")
 
         kinds = [part["type"] for part in _request_content(openrouter)]
         assert kinds == ["text", "input_audio"]

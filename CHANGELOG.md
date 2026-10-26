@@ -10,6 +10,17 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-10-25
+
+### Fixed
+
+- Every song with embedded cover art failed with "Operation not permitted".
+  The art is a one-frame video stream marked as an attached picture, and
+  seeking in it for frames fails with EPERM. It is no longer sampled; the
+  song is captioned from its sound and tags. This, not the pCloud mount as
+  1.0.4 supposed, was the cause of the refused songs; EPERM stays a
+  transient failure, retried at most five times.
+
 ## [1.0.4] - 2026-10-25
 
 ### Fixed

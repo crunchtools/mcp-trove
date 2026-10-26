@@ -119,13 +119,25 @@ def sample(path: Path) -> MediaSample:
 
     The frames and the audio are read in separate passes: seeking for frames
     leaves the demuxer at the end of the file.
+
+    A song's embedded cover art is a one-frame "video" stream marked
+    attached_pic; seeking in it fails with EPERM, which failed every song
+    with art. It is not sampled: the song is described from its sound.
     """
     import av
 
     result = probe(path)
     with av.open(str(path)) as container:
-        if container.streams.video:
-            result.frames = _frames(container, container.streams.video[0], result.duration)
+        picture = next(
+            (
+                stream
+                for stream in container.streams.video
+                if not stream.disposition & av.stream.Disposition.attached_pic
+            ),
+            None,
+        )
+        if picture is not None:
+            result.frames = _frames(container, picture, result.duration)
     with av.open(str(path)) as container:
         if container.streams.audio:
             result.audio = _audio_clip(container, container.streams.audio[0], result.duration)
