@@ -10,6 +10,8 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-10-31
+
 ### Security
 
 - Upgraded locked dependencies within their declared ranges to clear the
