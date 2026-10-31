@@ -10,6 +10,11 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+### Security
+
+- Upgraded locked dependencies within their declared ranges to clear the
+  advisories the fleet dependency audit found (anyio, authlib, certifi, cryptography, dnspython, fastmcp, filelock, fsspec, joserfc, lxml, opentelemetry-api, pillow, pyasn1, pydantic-settings, pygments, pyjwt, requests, urllib3).
+
 ## [1.0.6] - 2026-10-26
 
 ### Fixed
