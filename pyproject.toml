@@ -126,6 +126,7 @@ max-complexity = 10
 "src/mcp_trove_crunchtools/tools/*" = ["TID252"]
 
 [tool.mypy]
+files = ["src"]
 python_version = "3.11"
 strict = true
 warn_return_any = true
@@ -141,3 +142,14 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.sdlc.push]
+# No in-repo Semgrep rules: the check exits 2 when .semgrep is absent
+# rather than scanning nothing and calling it a pass.
+skip = ["semgrep"]
+
+[tool.sdlc.ci]
+# The CodeQL Action job uploads to the Security tab and annotates new
+# alerts on the pull request, so CI does not analyse a second time.
+# The push tier still gates on it.
+skip = ["codeql"]
