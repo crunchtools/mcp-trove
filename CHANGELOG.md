@@ -10,6 +10,16 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-11-05
+
+### Fixed
+
+- `trove_remove` on a directory that no longer exists removed nothing, so a
+  tree deleted or moved out from under the index could never be purged: the
+  subtree delete needed the directory to still be on disk, and the nightly
+  run only prunes trees it still indexes. It now clears the path's own entry
+  and everything indexed beneath it, by an index range scan rather than LIKE.
+
 ## [1.0.7] - 2026-10-31
 
 ### Security
