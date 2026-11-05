@@ -818,21 +818,38 @@ def index_path(
 
 
 def remove_path(path: Path) -> dict[str, str | int]:
-    """Remove a file or directory from the index."""
+    """Remove a file or directory from the index.
+
+    A path that no longer exists on disk may have been either, so clear both
+    its own entry and everything indexed beneath it. That is the case that
+    matters: a tree deleted or moved out from under the index can only be
+    purged by name, and the nightly run prunes a tree it still indexes.
+    """
     resolved = path.resolve()
     resolved_str = str(resolved)
 
-    if resolved.is_file() or not resolved.exists():
-        existing = db.query_one("SELECT id FROM files WHERE path = ?", (resolved_str,))
-        if existing:
-            db.delete_file_data(existing["id"])
-            return {"path": resolved_str, "removed": 1}
-        return {"path": resolved_str, "removed": 0}
+    if resolved.is_file():
+        return {"path": resolved_str, "removed": _delete_entry(resolved_str)}
 
-    files = db.query(
-        "SELECT id, path FROM files WHERE path LIKE ?",
-        (resolved_str + "/%",),
-    )
-    for file_row in files:
-        db.delete_file_data(file_row["id"])
-    return {"path": resolved_str, "removed": len(files)}
+    if not resolved.exists():
+        removed = _delete_entry(resolved_str) + _delete_tree(resolved)
+        return {"path": resolved_str, "removed": removed}
+
+    return {"path": resolved_str, "removed": _delete_tree(resolved)}
+
+
+def _delete_entry(path_str: str) -> int:
+    """Drop the index entry for one exact path, if it has one."""
+    existing = db.query_one("SELECT id FROM files WHERE path = ?", (path_str,))
+    if not existing:
+        return 0
+    db.delete_file_data(existing["id"])
+    return 1
+
+
+def _delete_tree(directory: Path) -> int:
+    """Drop every index entry under directory."""
+    rows = _rows_under(directory)
+    for row in rows:
+        db.delete_file_data(row["id"])
+    return len(rows)

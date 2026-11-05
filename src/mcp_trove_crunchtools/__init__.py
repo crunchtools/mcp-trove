@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-__version__ = "1.0.7"
+__version__ = "1.0.8"
 
 
 def main() -> None:

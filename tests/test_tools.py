@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -223,6 +224,21 @@ class TestIndexTools:
     async def test_remove_nonexistent(self, in_memory_db: sqlite3.Connection) -> None:
         result = await trove_remove("/nonexistent/file.txt")
         assert result["files_removed"] == 0
+
+    @pytest.mark.asyncio
+    async def test_remove_tree_already_gone(self, in_memory_db: sqlite3.Connection) -> None:
+        """A tree deleted out from under the index can still be purged by name."""
+        tree = Path(tempfile.mkdtemp())
+        (tree / "doc.txt").write_text("Content from a tree that goes away.")
+
+        await trove_index(str(tree))
+        assert len(await trove_list()) == 1
+
+        shutil.rmtree(tree)
+        result = await trove_remove(str(tree))
+
+        assert result["files_removed"] == 1
+        assert len(await trove_list()) == 0
 
 
 class TestSearchTools:
