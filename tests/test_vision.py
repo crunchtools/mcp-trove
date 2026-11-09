@@ -7,11 +7,19 @@ import io
 import os
 import sys
 import tempfile
+from contextlib import contextmanager
+from importlib.metadata import version
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+
+from mcp_trove_crunchtools import vision
 from mcp_trove_crunchtools.errors import ExtractionError
 from mcp_trove_crunchtools.vision import (
     OPENROUTER_MAX_MEDIA_BYTES,
@@ -383,3 +391,97 @@ class TestOpenRouterBackend:
             pytest.raises(ExtractionError, match="openai not installed"),
         ):
             backend._get_client()
+
+
+class TestOllamaHttpContract:
+    """The outbound HTTP contract (constitution v1.36.0, profile Layer 3).
+
+    A real `httpx.Client` over a `MockTransport`: the agent string is a header
+    the client adds and the ceiling is enforced while the client reads, so
+    mocking the client's own method would mock away both.
+    """
+
+    @staticmethod
+    @contextmanager
+    def _serving(handler: Callable[[httpx.Request], httpx.Response]) -> Iterator[None]:
+        real = httpx.Client
+
+        def factory(**kwargs: Any) -> httpx.Client:
+            kwargs.pop("transport", None)
+            return real(transport=httpx.MockTransport(handler), **kwargs)
+
+        with patch.object(httpx, "Client", factory):
+            yield
+
+    @staticmethod
+    def _image(tmp_path: Path) -> Path:
+        path = tmp_path / "photo.jpg"
+        path.write_bytes(b"\xff\xd8\xff\xe0jpegbytes")
+        return path
+
+    def test_the_request_names_the_product_and_version(self, tmp_path: Path) -> None:
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request.headers["User-Agent"])
+            return httpx.Response(200, json={"response": "a cat"})
+
+        with self._serving(handler):
+            caption = OllamaBackend("llava", "describe").caption(self._image(tmp_path), "image")
+
+        assert caption == "a cat"
+        expected = (
+            f"mcp-trove-crunchtools/{version('mcp-trove-crunchtools')} "
+            "(+https://github.com/crunchtools/mcp-trove)"
+        )
+        assert seen == [expected]
+        assert "python-httpx" not in seen[0]
+
+    def test_a_chunked_body_over_the_cap_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`.read()` with no argument let whatever was on port 11434 decide."""
+        monkeypatch.setattr(vision, "MAX_RESPONSE_SIZE", 4096)
+
+        def chunks() -> Iterator[bytes]:
+            for _ in range(16):
+                yield b"x" * 1024
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            response = httpx.Response(
+                200, headers={"content-type": "application/json"}, content=chunks()
+            )
+            assert "content-length" not in response.headers
+            return response
+
+        with self._serving(handler), pytest.raises(ExtractionError) as caught:
+            OllamaBackend("llava", "describe").caption(self._image(tmp_path), "image")
+
+        assert "over the 4096 byte limit" in str(caught.value)
+
+    def test_a_non_json_answer_says_what_came_back(self, tmp_path: Path) -> None:
+        """Something else listening on 11434 is the case this has to name."""
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, headers={"content-type": "text/html"}, text="<title>Grafana</title>"
+            )
+
+        with self._serving(handler), pytest.raises(ExtractionError) as caught:
+            OllamaBackend("llava", "describe").caption(self._image(tmp_path), "image")
+
+        message = str(caught.value)
+        assert "Grafana" in message
+        assert "text/html" in message
+        assert "localhost:11434/api/generate" in message
+
+    def test_an_error_status_quotes_the_body(self, tmp_path: Path) -> None:
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404, json={"error": "model llava not found"})
+
+        with self._serving(handler), pytest.raises(ExtractionError) as caught:
+            OllamaBackend("llava", "describe").caption(self._image(tmp_path), "image")
+
+        message = str(caught.value)
+        assert "model llava not found" in message
+        assert "HTTP 404" in message

@@ -10,9 +10,10 @@ import logging
 import os
 import sqlite3
 import threading
-import urllib.request
+from importlib.metadata import version
 from typing import TYPE_CHECKING, Any, Protocol
 
+import httpx
 from pydantic import SecretStr
 
 from . import database, media
@@ -27,6 +28,21 @@ if TYPE_CHECKING:
     from .media import MediaSample
 
 logger = logging.getLogger(__name__)
+
+# Identify this client by name (constitution v1.36.0, MCP Server profile
+# Layer 3). The version comes from installed package metadata so it cannot
+# drift from pyproject.toml.
+USER_AGENT = (
+    f"mcp-trove-crunchtools/{version('mcp-trove-crunchtools')} "
+    "(+https://github.com/crunchtools/mcp-trove)"
+)
+
+# A caption is a sentence or two. Ollama answering with megabytes means
+# something else is on that port, and reading it whole is how a local
+# misconfiguration becomes this process's memory problem.
+MAX_RESPONSE_SIZE = 4 * 1024 * 1024
+OLLAMA_TIMEOUT = 120.0
+BODY_SNIPPET_CHARS = 200
 
 _IMAGE_MIMES: dict[str, str] = {
     ".jpg": "image/jpeg",
@@ -320,6 +336,25 @@ class OpenRouterBackend:
         raise ExtractionError(str(path), "OpenRouter returned empty response")
 
 
+def _snippet(body: bytes) -> str:
+    """A short, single-line excerpt of a response body, for an error message."""
+    prefix = body[: BODY_SNIPPET_CHARS * 4]
+    collapsed = " ".join(prefix.decode("utf-8", errors="replace").split())
+    if not collapsed:
+        return "<empty body>"
+    if len(collapsed) > BODY_SNIPPET_CHARS or len(body) > len(prefix):
+        return collapsed[: BODY_SNIPPET_CHARS - 3] + "..."
+    return collapsed
+
+
+def _where(response: httpx.Response) -> str:
+    """Which request a response answered, for an error message."""
+    return (
+        f"{response.request.method} {response.request.url} "
+        f"(HTTP {response.status_code}, {response.headers.get('content-type', 'no content-type')})"
+    )
+
+
 class OllamaBackend:
     def __init__(self, model: str, prompt: str) -> None:
         self._model = model
@@ -341,21 +376,58 @@ class OllamaBackend:
         ).encode()
 
         ollama_url = f"{self._base_url}/api/generate"
-        req = urllib.request.Request(
-            ollama_url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        )
         try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                ollama_response = json.loads(resp.read().decode())
-        except Exception as exc:
+            with (
+                httpx.Client(
+                    timeout=OLLAMA_TIMEOUT,
+                    headers={"User-Agent": USER_AGENT, "Content-Type": "application/json"},
+                ) as client,
+                client.stream("POST", ollama_url, content=payload) as response,
+            ):
+                body = self._read_capped(response, path)
+        except httpx.HTTPError as exc:
             raise ExtractionError(str(path), f"Ollama request failed: {exc}") from exc
+
+        if not response.is_success:
+            raise ExtractionError(str(path), f"{_where(response)} returned {_snippet(body)}")
+        try:
+            ollama_response = json.loads(body)
+        except ValueError as exc:
+            raise ExtractionError(
+                str(path), f"{_where(response)} is not JSON ({exc}): {_snippet(body)}"
+            ) from exc
 
         response_text = ollama_response.get("response", "")
         if response_text:
             return str(response_text)
         raise ExtractionError(str(path), "Ollama returned empty response")
+
+    @staticmethod
+    def _read_capped(response: httpx.Response, path: Path) -> bytes:
+        """Read the body, aborting as soon as it would pass MAX_RESPONSE_SIZE.
+
+        Measured before each chunk is copied in: `iter_bytes()` promises nothing
+        about chunk size, so appending first would copy in exactly the response
+        being refused. The previous implementation called `.read()` with no
+        argument at all, so whatever was listening on 11434 decided how much
+        memory this process used.
+        """
+        declared = response.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > MAX_RESPONSE_SIZE:
+            raise ExtractionError(
+                str(path),
+                f"{_where(response)} declared {declared} bytes, over the "
+                f"{MAX_RESPONSE_SIZE} byte limit",
+            )
+        body = bytearray()
+        for chunk in response.iter_bytes():
+            if len(body) + len(chunk) > MAX_RESPONSE_SIZE:
+                raise ExtractionError(
+                    str(path),
+                    f"{_where(response)} sent over the {MAX_RESPONSE_SIZE} byte limit",
+                )
+            body += chunk
+        return bytes(body)
 
 
 class _Budget:

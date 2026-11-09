@@ -2,9 +2,9 @@
 
 > **Version:** 1.1.0
 > **Ratified:** 2026-03-14
-> **Amended:** 2026-10-02
+> **Amended:** 2026-11-09
 > **Status:** Active
-> **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.31.0
+> **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.36.0
 > **Profile:** MCP Server
 
 This file holds what is specific to mcp-trove. The fleet rules and the MCP
