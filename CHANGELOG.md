@@ -10,6 +10,48 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-09
+
+### Fixed
+
+- **Three of the four vision backends went out nameless and unbounded.** The
+  sweep that landed in 1.1.0 fixed the Ollama path in this module and left the
+  OpenAI, OpenRouter and Gemini clients beside it untouched: each was
+  constructed with no agent string and read its body inside the vendor SDK,
+  where the 4MB ceiling could not reach it. `check_http_client` cannot see any
+  of this — the trigger it keys on is an `httpx` import — so the gap passed the
+  machine check and was caught by review (RT #1601, item I22).
+
+  All three now send
+  `User-Agent: mcp-trove-crunchtools/<version> (+<repo url>)`, with
+  `Accept-Encoding: identity` so that the bytes counted are the bytes that
+  arrive; a caption response is a few hundred bytes, so the compression was
+  worth nothing and an honest limit is worth more.
+
+  The two openai-SDK backends read through `with_streaming_response`, which
+  hands the body back unread so the ceiling applies while reading it, and the
+  caption is parsed from those bounded bytes rather than from the SDK's typed
+  object — `.parse()` would read the body itself, with no limit. The Gemini
+  backend passes a response hook through `http_options.client_args`, since
+  google-genai builds its own transport; the hook rejects an oversized
+  `content-length` early and wraps the stream in a byte counter otherwise.
+
+  The stream wrapper is derived from the HTTP library that built the response,
+  not from the `httpx` this module imports. The openai SDK moved from `httpx`
+  to `httpx2` between 1.x and 3.x, which is exactly how a wrapper built on the
+  wrong flavour fails the library's own `isinstance` check on close.
+
+### Changed
+
+- The vision suite drives a real SDK client over a `MockTransport` rather than
+  a `MagicMock` scripting `chat.completions.create`. A mock of the call cannot
+  see the agent string the client adds or the ceiling the read enforces, and
+  the assertions now read the request off the wire, which is stronger than
+  reading back the keyword arguments a mock was handed.
+
+- `httpx2` is a declared dev dependency — it is the transport the openai SDK is
+  built on, and taking it transitively is how it would silently change flavour.
+
 ## [1.1.0] - 2026-11-09
 
 ### Fixed
