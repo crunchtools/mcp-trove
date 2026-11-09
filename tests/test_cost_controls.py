@@ -15,7 +15,7 @@ from mcp_trove_crunchtools import indexer as indexer_mod
 from mcp_trove_crunchtools import vision
 from mcp_trove_crunchtools.indexer import index_path_async
 from mcp_trove_crunchtools.tools.run_index import run_index
-from mcp_trove_crunchtools.vision import OpenRouterBackend
+from tests.conftest import caption_reply, openrouter_backend
 
 if TYPE_CHECKING:
     import sqlite3
@@ -225,14 +225,9 @@ class TestFallbackModel:
     def _models_sent(self, tmp_path: Path) -> list[str]:
         img = tmp_path / "a.png"
         img.write_bytes(b"\x89PNG")
-        backend = OpenRouterBackend("google/gemini-3.1-flash-lite", "describe")
-        client = MagicMock()
-        client.chat.completions.create.return_value.choices = [
-            MagicMock(message=MagicMock(content="a cat"))
-        ]
-        backend._client = client
-        backend.caption(img, "image")
-        models: list[str] = client.chat.completions.create.call_args.kwargs["extra_body"]["models"]
+        with openrouter_backend(caption_reply("a cat"), prompt="describe") as (backend, calls):
+            backend.caption(img, "image")
+            models: list[str] = calls.payload()["models"]
         return models
 
     def test_no_fallback_unless_configured(self, tmp_path: Path) -> None:

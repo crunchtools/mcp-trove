@@ -14,10 +14,11 @@ from mcp_trove_crunchtools import media, vision
 from mcp_trove_crunchtools.config import get_config
 from mcp_trove_crunchtools.extractor import MAX_FILE_SIZE, classify, extract_text
 from mcp_trove_crunchtools.indexer import index_path_async
-from mcp_trove_crunchtools.vision import OpenRouterBackend
+from tests.conftest import SdkCalls, caption_reply, openrouter_backend
 
 if TYPE_CHECKING:
     import sqlite3
+    from collections.abc import Generator
     from pathlib import Path
 
 RATE = 16000
@@ -104,23 +105,23 @@ def _make_song_with_art(path: Path, seconds: int = 30) -> Path:
 
 
 @pytest.fixture
-def openrouter(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """An OpenRouter backend whose API client is a mock answering every request."""
-    backend = OpenRouterBackend("google/gemini-3.5-flash-lite", "describe this")
-    client = MagicMock()
-    client.chat.completions.create.return_value.choices = [
-        MagicMock(message=MagicMock(content="A person training in a basement gym."))
-    ]
-    backend._client = client
-    monkeypatch.setattr(vision, "get_backend", lambda: backend)
-    return client
+def openrouter(monkeypatch: pytest.MonkeyPatch) -> Generator[SdkCalls, None, None]:
+    """An OpenRouter backend over a mock transport, answering every request.
+
+    The backend builds its own client, so the agent string and the bounded read
+    are the production ones; what the test supplies is the transport, and what
+    it reads back is the request that actually went out.
+    """
+    with openrouter_backend(
+        caption_reply("A person training in a basement gym."),
+        model="google/gemini-3.5-flash-lite",
+    ) as (backend, calls):
+        monkeypatch.setattr(vision, "get_backend", lambda: backend)
+        yield calls
 
 
-def _request_content(client: MagicMock) -> list[dict[str, Any]]:
-    content: list[dict[str, Any]] = client.chat.completions.create.call_args.kwargs["messages"][0][
-        "content"
-    ]
-    return content
+def _request_content(calls: SdkCalls) -> list[dict[str, Any]]:
+    return calls.content()
 
 
 class TestSampling:
@@ -249,7 +250,7 @@ class TestCaptioning:
     ) -> None:
         text = extract_text(_make_clip(tmp_path / "clip.mp4"), "fp:abc")
 
-        assert openrouter.chat.completions.create.call_count == 1
+        assert openrouter.count == 1
         kinds = [part["type"] for part in _request_content(openrouter)]
         assert kinds == ["text"] + ["image_url"] * media.FRAME_COUNT + ["input_audio"]
         assert "[Video] Duration: 0m30s" in text
@@ -288,7 +289,7 @@ class TestCaptioning:
 
         extract_text(clip, "fp:same")
 
-        assert openrouter.chat.completions.create.call_count == 1
+        assert openrouter.count == 1
         sampled.assert_not_called()
 
 

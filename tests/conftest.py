@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import json
+import os
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
 import numpy as np
@@ -80,3 +83,85 @@ def _mock_embedder() -> Generator[None]:
 def in_memory_db() -> sqlite3.Connection:
     """Create an in-memory SQLite database with schema."""
     return db_mod.get_db(":memory:")
+
+
+class SdkCalls:
+    """The requests an openai-SDK-backed backend actually sent.
+
+    The suite used to script `chat.completions.create` on a `MagicMock`, which
+    mocked away the thing under test: the agent string is a header the client
+    adds and the ceiling is enforced while the body is read, so a mock standing
+    in for the call could see neither. A `MockTransport` under a client the
+    production code builds itself sees both -- and these accessors read the
+    request off the wire, which is a stronger assertion than reading back the
+    kwargs a mock was handed.
+    """
+
+    def __init__(self) -> None:
+        self.requests: list[Any] = []
+
+    @property
+    def count(self) -> int:
+        return len(self.requests)
+
+    def payload(self, index: int = -1) -> dict[str, Any]:
+        """The JSON body of a recorded request."""
+        return cast("dict[str, Any]", json.loads(self.requests[index].content))
+
+    def content(self, index: int = -1) -> list[dict[str, Any]]:
+        """The message content list of a recorded chat completion."""
+        return cast("list[dict[str, Any]]", self.payload(index)["messages"][0]["content"])
+
+    def header(self, name: str, index: int = -1) -> str | None:
+        return cast("str | None", self.requests[index].headers.get(name))
+
+
+def caption_reply(text: str = "a caption") -> Any:
+    """A chat-completions reply carrying `text`."""
+    import httpx2
+
+    return httpx2.Response(
+        200,
+        json={"choices": [{"message": {"content": text}}]},
+        headers={"content-type": "application/json"},
+    )
+
+
+@contextmanager
+def openai_sdk(reply: Any) -> Generator[SdkCalls, None, None]:
+    """Put a MockTransport under every client the openai SDK builds.
+
+    `reply` is either a response or a callable taking the request. The patch is
+    on `openai.OpenAI`, so the backend still constructs its own client with its
+    own headers; only the transport comes from the test.
+    """
+    import httpx2
+    import openai
+
+    calls = SdkCalls()
+    real = openai.OpenAI
+
+    def handler(request: Any) -> Any:
+        calls.requests.append(request)
+        return reply(request) if callable(reply) else reply
+
+    def factory(**kwargs: Any) -> Any:
+        kwargs["http_client"] = httpx2.Client(transport=httpx2.MockTransport(handler))
+        return real(**kwargs)
+
+    with patch.object(openai, "OpenAI", factory):
+        yield calls
+
+
+@contextmanager
+def openrouter_backend(
+    reply: Any, model: str = "google/gemini-3.1-flash-lite", prompt: str = "describe this"
+) -> Generator[tuple[Any, SdkCalls], None, None]:
+    """An OpenRouter backend that builds its own client, over a mock transport."""
+    from mcp_trove_crunchtools.vision import OpenRouterBackend
+
+    with (
+        patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-or-test"}),  # gatehouse: allow-secret
+        openai_sdk(reply) as calls,
+    ):
+        yield OpenRouterBackend(model, prompt), calls

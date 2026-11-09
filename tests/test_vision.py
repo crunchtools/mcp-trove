@@ -32,6 +32,7 @@ from mcp_trove_crunchtools.vision import (
     get_backend,
     reset_backend,
 )
+from tests.conftest import caption_reply, openrouter_backend
 
 
 class TestGetMime:
@@ -275,69 +276,66 @@ class TestOpenRouterBackend:
         ):
             backend._get_client()
         mock_openai.OpenAI.assert_called_once_with(
-            api_key="sk-or-file", base_url="https://openrouter.ai/api/v1"
+            api_key="sk-or-file",
+            base_url="https://openrouter.ai/api/v1",
+            default_headers=vision.SDK_HEADERS,
         )
 
     def test_video_sent_as_video_url_with_zdr(self, tmp_path: Path) -> None:
         clip = tmp_path / "clip.mp4"
         clip.write_bytes(b"\x00\x00\x00\x18ftypmp42")
-        backend = OpenRouterBackend("google/gemini-3.1-flash-lite", "describe this")
-        client = MagicMock()
-        client.chat.completions.create.return_value.choices = [
-            MagicMock(message=MagicMock(content="a river at dusk"))
-        ]
-        backend._client = client
-        assert backend.caption(clip, "video") == "a river at dusk"
-        kwargs = client.chat.completions.create.call_args.kwargs
-        media = kwargs["messages"][0]["content"][1]
+        with openrouter_backend(caption_reply("a river at dusk")) as (backend, calls):
+            assert backend.caption(clip, "video") == "a river at dusk"
+
+        media = calls.content()[1]
         assert media["type"] == "video_url"
         assert media["video_url"]["url"].startswith("data:video/mp4;base64,")
-        assert kwargs["extra_body"]["provider"] == {"zdr": True, "data_collection": "deny"}
-        assert kwargs["extra_body"]["models"] == ["google/gemini-3.1-flash-lite"]
+        payload = calls.payload()
+        assert payload["provider"] == {"zdr": True, "data_collection": "deny"}
+        assert payload["models"] == ["google/gemini-3.1-flash-lite"]
 
     def test_empty_response(self, tmp_path: Path) -> None:
         img = tmp_path / "a.png"
         img.write_bytes(b"\x89PNG")
-        backend = OpenRouterBackend("google/gemini-3.1-flash-lite", "describe this")
-        client = MagicMock()
-        client.chat.completions.create.return_value.choices = []
-        backend._client = client
-        with pytest.raises(ExtractionError, match="empty response"):
+        with (
+            openrouter_backend(caption_reply("")) as (backend, _calls),
+            pytest.raises(ExtractionError, match="empty response"),
+        ):
             backend.caption(img, "image")
 
     def test_image_sent_as_image_url(self, tmp_path: Path) -> None:
         img = tmp_path / "a.png"
         img.write_bytes(b"\x89PNG")
-        backend = OpenRouterBackend("google/gemini-3.1-flash-lite", "describe this")
-        client = MagicMock()
-        client.chat.completions.create.return_value.choices = [
-            MagicMock(message=MagicMock(content="a red barn"))
-        ]
-        backend._client = client
-        assert backend.caption(img, "image") == "a red barn"
-        media = client.chat.completions.create.call_args.kwargs["messages"][0]["content"][1]
+        with openrouter_backend(caption_reply("a red barn")) as (backend, calls):
+            assert backend.caption(img, "image") == "a red barn"
+
+        media = calls.content()[1]
         assert media["type"] == "image_url"
         assert media["image_url"]["url"].startswith("data:image/png;base64,")
 
     def test_api_error_becomes_extraction_error(self, tmp_path: Path) -> None:
         img = tmp_path / "a.png"
         img.write_bytes(b"\x89PNG")
-        backend = OpenRouterBackend("google/gemini-3.1-flash-lite", "describe this")
-        client = MagicMock()
-        client.chat.completions.create.side_effect = RuntimeError("HTTP 429")
-        backend._client = client
-        with pytest.raises(ExtractionError, match="HTTP 429"):
+
+        def rate_limited(_request: object) -> object:
+            import httpx2
+
+            return httpx2.Response(429, json={"error": {"message": "slow down"}})
+
+        with (
+            openrouter_backend(rate_limited) as (backend, _calls),
+            pytest.raises(ExtractionError, match="429"),
+        ):
             backend.caption(img, "image")
 
     def test_oversized_media_rejected_before_read(self, tmp_path: Path) -> None:
         clip = tmp_path / "big.mp4"
         with clip.open("wb") as f:
             f.truncate(OPENROUTER_MAX_MEDIA_BYTES + 1)
-        backend = OpenRouterBackend("google/gemini-3.1-flash-lite", "describe this")
-        backend._client = MagicMock()
-        with pytest.raises(ExtractionError, match="inline media limit"):
-            backend.caption(clip, "video")
-        backend._client.chat.completions.create.assert_not_called()
+        with openrouter_backend(caption_reply()) as (backend, calls):
+            with pytest.raises(ExtractionError, match="inline media limit"):
+                backend.caption(clip, "video")
+            assert calls.count == 0
 
     def test_oversized_image_sent_downscaled(self, tmp_path: Path) -> None:
         """A photo over the inline limit is captioned from a JPEG copy, not failed."""
@@ -348,17 +346,10 @@ class TestOpenRouterBackend:
         img = tmp_path / "pano.png"
         Image.fromarray(noise).save(img, compress_level=0)
         assert img.stat().st_size > OPENROUTER_MAX_MEDIA_BYTES
-        backend = OpenRouterBackend("google/gemini-3.1-flash-lite", "describe this")
-        client = MagicMock()
-        client.chat.completions.create.return_value.choices = [
-            MagicMock(message=MagicMock(content="a wide valley"))
-        ]
-        backend._client = client
+        with openrouter_backend(caption_reply("a wide valley")) as (backend, calls):
+            assert backend.caption(img, "image") == "a wide valley"
 
-        assert backend.caption(img, "image") == "a wide valley"
-        url = client.chat.completions.create.call_args.kwargs["messages"][0]["content"][1][
-            "image_url"
-        ]["url"]
+        url = calls.content()[1]["image_url"]["url"]
         assert url.startswith("data:image/jpeg;base64,")
         sent = Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1])))
         assert max(sent.size) == OVERSIZE_IMAGE_SIDE
@@ -368,12 +359,10 @@ class TestOpenRouterBackend:
         with img.open("wb") as f:
             f.write(b"\xff\xd8\xff\xe0 not really a jpeg")
             f.truncate(OPENROUTER_MAX_MEDIA_BYTES + 1)
-        backend = OpenRouterBackend("google/gemini-3.1-flash-lite", "describe this")
-        backend._client = MagicMock()
-
-        with pytest.raises(ExtractionError, match="cannot downscale"):
-            backend.caption(img, "image")
-        backend._client.chat.completions.create.assert_not_called()
+        with openrouter_backend(caption_reply()) as (backend, calls):
+            with pytest.raises(ExtractionError, match="cannot downscale"):
+                backend.caption(img, "image")
+            assert calls.count == 0
 
     def test_unreadable_key_file(self, tmp_path: Path) -> None:
         backend = OpenRouterBackend("google/gemini-3.1-flash-lite", "describe this")
@@ -485,3 +474,175 @@ class TestOllamaHttpContract:
         message = str(caught.value)
         assert "model llava not found" in message
         assert "HTTP 404" in message
+
+
+def _png(tmp_path: Path) -> Path:
+    """A smallest-possible real PNG, so `_get_mime` recognises it."""
+    img = tmp_path / "a.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    return img
+
+
+class TestSdkHttpContract:
+    """The outbound contract on the three paths an SDK reads for us.
+
+    `check_http_client` cannot judge these: the trigger it keys on is an
+    `httpx` import, and these bodies are read inside google-genai and the
+    openai SDK. So the contract is held by these tests instead, which is what
+    the profile's stated limit ("per repo, not per read path") means in
+    practice.
+    """
+
+    def test_the_agent_string_reaches_an_openai_request(self, tmp_path: Path) -> None:
+        img = _png(tmp_path)
+        with openrouter_backend(caption_reply("a caption")) as (backend, calls):
+            backend.caption(img, "image")
+
+        expected = (
+            f"mcp-trove-crunchtools/{version('mcp-trove-crunchtools')} "
+            "(+https://github.com/crunchtools/mcp-trove)"
+        )
+        assert calls.header("user-agent") == expected
+        assert "python-httpx" not in (calls.header("user-agent") or "")
+
+    def test_the_request_asks_for_an_uncompressed_body(self, tmp_path: Path) -> None:
+        """The counters see decoded chunks, so a gzip body expands past the cap."""
+        img = _png(tmp_path)
+        with openrouter_backend(caption_reply()) as (backend, calls):
+            backend.caption(img, "image")
+
+        assert calls.header("accept-encoding") == "identity"
+
+    def test_a_body_over_the_cap_is_refused(self, tmp_path: Path) -> None:
+        """`create()` read it whole inside the SDK, where nothing here bounds it."""
+        img = _png(tmp_path)
+
+        def huge(_request: object) -> Any:
+            import httpx2
+
+            def chunks() -> Iterator[bytes]:
+                for _ in range(vision.MAX_RESPONSE_SIZE // 1024 + 1):
+                    yield b"x" * 1024
+
+            return httpx2.Response(
+                200, headers={"content-type": "application/json"}, content=chunks()
+            )
+
+        with (
+            openrouter_backend(huge) as (backend, _calls),
+            pytest.raises(ExtractionError, match="byte limit"),
+        ):
+            backend.caption(img, "image")
+
+    def test_a_declared_length_over_the_cap_is_refused_early(self, tmp_path: Path) -> None:
+        img = _png(tmp_path)
+
+        def declares_too_much(_request: object) -> Any:
+            import httpx2
+
+            response = httpx2.Response(200, json={"choices": [{"message": {"content": "x"}}]})
+            response.headers["content-length"] = str(vision.MAX_RESPONSE_SIZE + 1)
+            return response
+
+        with (
+            openrouter_backend(declares_too_much) as (backend, _calls),
+            pytest.raises(ExtractionError, match="declared"),
+        ):
+            backend.caption(img, "image")
+
+    def test_a_malformed_declared_length_does_not_crash(self, tmp_path: Path) -> None:
+        """`int()` on an unchecked header is a ValueError escaping as itself."""
+        img = _png(tmp_path)
+
+        def malformed(_request: object) -> Any:
+            import httpx2
+
+            response = httpx2.Response(
+                200, json={"choices": [{"message": {"content": "a caption"}}]}
+            )
+            response.headers["content-length"] = "not-a-number"
+            return response
+
+        with openrouter_backend(malformed) as (backend, _calls):
+            assert backend.caption(img, "image") == "a caption"
+
+    def test_a_body_that_is_not_json_says_so(self, tmp_path: Path) -> None:
+        """A captive portal on the way to the API is valid HTTP and invalid JSON."""
+        img = _png(tmp_path)
+
+        def challenge(_request: object) -> Any:
+            import httpx2
+
+            return httpx2.Response(
+                200, headers={"content-type": "text/html"}, text="<title>Just a moment</title>"
+            )
+
+        with (
+            openrouter_backend(challenge) as (backend, _calls),
+            pytest.raises(ExtractionError, match="not JSON"),
+        ):
+            backend.caption(img, "image")
+
+    def test_a_json_body_without_a_caption_says_so(self, tmp_path: Path) -> None:
+        def no_choices(_request: object) -> Any:
+            import httpx2
+
+            return httpx2.Response(200, json={"error": "nope"})
+
+        img = _png(tmp_path)
+        with (
+            openrouter_backend(no_choices) as (backend, _calls),
+            pytest.raises(ExtractionError, match="no caption"),
+        ):
+            backend.caption(img, "image")
+
+    def test_the_gemini_client_is_given_the_header_and_the_hook(self, tmp_path: Path) -> None:
+        """google-genai builds its own transport, so both are passed to it."""
+        mock_genai = MagicMock()
+        mock_google = MagicMock()
+        mock_google.genai = mock_genai
+        backend = GeminiBackend("gemini-2.5-flash", "describe this")
+        with (
+            patch.dict(os.environ, {"GEMINI_API_KEY": "k"}),
+            patch.dict(
+                sys.modules,
+                {"google": mock_google, "google.genai": mock_genai},
+            ),
+        ):
+            backend._get_client()
+
+        options = mock_genai.Client.call_args.kwargs["http_options"]
+        assert options["headers"] == vision.SDK_HEADERS
+        hooks = options["client_args"]["event_hooks"]["response"]
+        assert hooks == [vision._reject_oversized]
+
+    def test_the_gemini_hook_bounds_an_unsized_body(self, tmp_path: Path) -> None:
+        """The hook replaces the stream, so the ceiling applies while reading."""
+
+        def chunks() -> Iterator[bytes]:
+            for _ in range(vision.MAX_RESPONSE_SIZE // 1024 + 1):
+                yield b"y" * 1024
+
+        response = httpx.Response(200, content=chunks())
+        response.request = httpx.Request("POST", "https://generativelanguage.googleapis.com/v1/x")
+        vision._reject_oversized(response)
+
+        with pytest.raises(vision._BoundedBodyError, match="byte limit"):
+            for _ in response.stream:
+                pass
+
+    def test_the_gemini_hook_refuses_a_declared_oversize(self, tmp_path: Path) -> None:
+        response = httpx.Response(200, content=b"{}")
+        response.request = httpx.Request("POST", "https://generativelanguage.googleapis.com/v1/x")
+        response.headers["content-length"] = str(vision.MAX_RESPONSE_SIZE + 1)
+
+        with pytest.raises(vision._BoundedBodyError, match="declared"):
+            vision._reject_oversized(response)
+
+    def test_the_gemini_hook_passes_a_small_body_through(self, tmp_path: Path) -> None:
+        response = httpx.Response(200, content=b'{"ok": true}')
+        response.request = httpx.Request("POST", "https://generativelanguage.googleapis.com/v1/x")
+
+        vision._reject_oversized(response)
+
+        assert b"".join(response.stream) == b'{"ok": true}'

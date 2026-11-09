@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import contextvars
+import importlib
 import io
 import json
 import logging
@@ -22,7 +23,7 @@ from .errors import ExtractionError, VisionDeferredError
 from .media import AUDIO_CLIP_SECONDS
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
     from .media import MediaSample
@@ -36,6 +37,146 @@ USER_AGENT = (
     f"mcp-trove-crunchtools/{version('mcp-trove-crunchtools')} "
     "(+https://github.com/crunchtools/mcp-trove)"
 )
+
+# The three vendor SDKs read their own bodies, so the ceiling and the agent
+# string have to be handed to them rather than enforced around them.
+#
+# `Accept-Encoding: identity` so the bytes counted are the bytes that arrive: a
+# gzip body expands after a wire count, and these counters see decoded chunks.
+# A caption response is a few hundred bytes, so the compression is worth
+# nothing here and the honest limit is worth more.
+SDK_HEADERS = {"User-Agent": USER_AGENT, "Accept-Encoding": "identity"}
+
+
+class _BoundedBodyError(Exception):
+    """A body that passed the ceiling, or that carried no caption.
+
+    Private, and translated by each backend into an `ExtractionError` naming
+    the file. Distinct from `ExtractionError` so that the broad `except
+    Exception` each backend wraps the SDK call in -- the SDK's own failure
+    taxonomy is wide -- cannot prefix this message a second time.
+
+    Takes the request and the problem separately so the message is composed
+    here: every one of these says which request, and a reader should not have
+    to check that each call site remembered to.
+    """
+
+    def __init__(self, what: str, problem: str) -> None:
+        super().__init__(f"{what} {problem}" if what else problem)
+
+
+# Keyed by the HTTP library's stream base class, so each flavour is composed once.
+_bounded_streams: dict[type, type] = {}
+
+
+def _compose_bounded_stream(base: Any) -> type:
+    """A byte-counting stream class derived from ``base``.
+
+    Built with ``type`` rather than a class statement because ``base`` is only
+    known at runtime: it is the ``SyncByteStream`` of whichever HTTP library the
+    SDK brought in, and the library checks the wrapper against that class by
+    ``isinstance`` when it closes the response.
+    """
+
+    def _init(self: Any, inner: Any, what: str = "SDK response") -> None:
+        self._inner = inner
+        self._what = what
+
+    def _iterate(self: Any) -> Iterator[bytes]:
+        total = 0
+        for chunk in self._inner:
+            total += len(chunk)
+            if total > MAX_RESPONSE_SIZE:
+                raise _BoundedBodyError(self._what, f"sent over the {MAX_RESPONSE_SIZE} byte limit")
+            yield chunk
+
+    def _close(self: Any) -> None:
+        self._inner.close()
+
+    return type(
+        "_BoundedStream",
+        (base,),
+        {
+            "__doc__": "Counts body bytes as they are read, for an unsized body.",
+            "__init__": _init,
+            "__iter__": _iterate,
+            "close": _close,
+        },
+    )
+
+
+def _bounded_stream_class(response: object) -> type:
+    """The byte-counting stream class for the library that built ``response``.
+
+    An SDK's HTTP layer is not necessarily the ``httpx`` this module imports.
+    google-genai is on ``httpx`` today; the openai SDK moved from ``httpx`` to
+    ``httpx2`` between 1.x and 3.x, which is what makes this worth deriving at
+    runtime rather than assuming. A wrapper built on the other flavour's base
+    fails the library's own ``isinstance`` check when the response is closed.
+    """
+    name = type(response).__module__.split(".")[0]
+    flavour = importlib.import_module(name)
+    base = getattr(flavour, "SyncByteStream", None)
+    if base is None:
+        raise _BoundedBodyError(name, "has no SyncByteStream: cannot bound a response body")
+    cached = _bounded_streams.get(base)
+    if cached is None:
+        cached = _compose_bounded_stream(base)
+        _bounded_streams[base] = cached
+    return cached
+
+
+def _reject_oversized(response: Any) -> None:
+    """Response hook: runs before the body is read, so it can bound it."""
+    where = f"{response.request.method} {response.request.url}"
+    declared = response.headers.get("content-length")
+    # `.isdigit()` because the header is whatever the far end sent: an
+    # unguarded `int()` turns a malformed value into a ValueError escaping as
+    # itself rather than an ExtractionError.
+    if declared and declared.isdigit() and int(declared) > MAX_RESPONSE_SIZE:
+        raise _BoundedBodyError(
+            where, f"declared {declared} bytes, over the {MAX_RESPONSE_SIZE} byte limit"
+        )
+    response.stream = _bounded_stream_class(response)(response.stream, where)
+
+
+def _read_capped_sdk(response: Any, what: str) -> bytes:
+    """Read an openai SDK streaming response under the ceiling.
+
+    The SDK owns the transport, but `with_streaming_response` hands back the
+    body unread, so the cap is enforced here rather than by a hook -- public
+    API, and it does not depend on which httpx flavour the SDK is built on.
+    """
+    declared = response.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_RESPONSE_SIZE:
+        raise _BoundedBodyError(
+            what, f"declared {declared} bytes, over the {MAX_RESPONSE_SIZE} byte limit"
+        )
+    body = bytearray()
+    for chunk in response.iter_bytes():
+        if len(body) + len(chunk) > MAX_RESPONSE_SIZE:
+            raise _BoundedBodyError(what, f"sent over the {MAX_RESPONSE_SIZE} byte limit")
+        body += chunk
+    return bytes(body)
+
+
+def _sdk_caption(response: Any, what: str) -> str:
+    """The caption text out of a bounded chat-completions body.
+
+    Parsed from the bytes rather than from the SDK's typed object, because the
+    bytes are what the ceiling applies to: `.parse()` would read the body
+    itself, with no limit.
+    """
+    body = _read_capped_sdk(response, what)
+    try:
+        payload = json.loads(body)
+    except ValueError as exc:
+        raise _BoundedBodyError(what, f"response is not JSON ({exc})") from exc
+    try:
+        return str(payload["choices"][0]["message"]["content"] or "")
+    except (KeyError, IndexError, TypeError) as exc:
+        raise _BoundedBodyError(what, f"response has no caption: {exc}") from exc
+
 
 # A caption is a sentence or two. Ollama answering with megabytes means
 # something else is on that port, and reading it whole is how a local
@@ -112,7 +253,14 @@ class GeminiBackend:
         timeout_s = get_config().vision_timeout
         self._client = genai.Client(
             api_key=api_key,
-            http_options={"timeout": timeout_s * 1000},
+            http_options={
+                "timeout": timeout_s * 1000,
+                # The SDK owns the transport, so the agent string and the
+                # ceiling are handed to it: `check_http_client` cannot see
+                # either from here (constitution v1.36.0, Layer 3).
+                "headers": SDK_HEADERS,
+                "client_args": {"event_hooks": {"response": [_reject_oversized]}},
+            },
         )
         return self._client
 
@@ -140,6 +288,8 @@ class GeminiBackend:
                 model=self._model,
                 contents=content,
             )
+        except _BoundedBodyError as exc:
+            raise ExtractionError(str(path), str(exc)) from exc
         except Exception as exc:
             raise ExtractionError(str(path), str(exc)) from exc
         if response.text:
@@ -169,7 +319,7 @@ class OpenAIBackend:
         if not api_key:
             raise ExtractionError("OpenAIBackend", "OPENAI_API_KEY not set")
 
-        self._client = openai.OpenAI(api_key=api_key)
+        self._client = openai.OpenAI(api_key=api_key, default_headers=SDK_HEADERS)
         return self._client
 
     def caption(self, path: Path, file_type: str) -> str:
@@ -182,7 +332,10 @@ class OpenAIBackend:
         image_url = f"data:{mime};base64,{b64}"
 
         try:
-            response = client.chat.completions.create(
+            # `with_streaming_response` so the body arrives unread and the
+            # ceiling can be enforced while reading it. `create()` reads it
+            # whole inside the SDK, where nothing here can bound it.
+            with client.chat.completions.with_streaming_response.create(
                 model=self._model,
                 messages=[
                     {
@@ -195,12 +348,14 @@ class OpenAIBackend:
                 ],
                 max_tokens=300,
                 timeout=get_config().vision_timeout,
-            )
-        except Exception as exc:
+            ) as response:
+                response_text = _sdk_caption(response, f"OpenAI {self._model}")
+        except _BoundedBodyError as exc:
             raise ExtractionError(str(path), str(exc)) from exc
-        response_text = response.choices[0].message.content
+        except Exception as exc:
+            raise ExtractionError(str(path), f"OpenAI {self._model}: {exc}") from exc
         if response_text:
-            return str(response_text)
+            return response_text
         raise ExtractionError(str(path), "OpenAI returned empty response")
 
 
@@ -255,7 +410,9 @@ class OpenRouterBackend:
             raise ExtractionError("OpenRouterBackend", "OPENROUTER_API_KEY not set")
 
         self._client = openai.OpenAI(
-            api_key=api_key.get_secret_value(), base_url=OPENROUTER_BASE_URL
+            api_key=api_key.get_secret_value(),
+            base_url=OPENROUTER_BASE_URL,
+            default_headers=SDK_HEADERS,
         )
         return self._client
 
@@ -318,7 +475,9 @@ class OpenRouterBackend:
             models.append(fallback)
 
         try:
-            response = client.chat.completions.create(
+            # Streamed for the ceiling, as in OpenAIBackend: `create()` reads
+            # the body whole inside the SDK, where nothing here can bound it.
+            with client.chat.completions.with_streaming_response.create(
                 model=self._model,
                 messages=[{"role": "user", "content": content}],
                 max_tokens=300,
@@ -327,12 +486,14 @@ class OpenRouterBackend:
                     "models": models,
                     "provider": {"zdr": True, "data_collection": "deny"},
                 },
-            )
-        except Exception as exc:
+            ) as response:
+                response_text = _sdk_caption(response, f"OpenRouter {self._model}")
+        except _BoundedBodyError as exc:
             raise ExtractionError(str(path), str(exc)) from exc
-        response_text = response.choices[0].message.content if response.choices else None
+        except Exception as exc:
+            raise ExtractionError(str(path), f"OpenRouter {self._model}: {exc}") from exc
         if response_text:
-            return str(response_text)
+            return response_text
         raise ExtractionError(str(path), "OpenRouter returned empty response")
 
 
