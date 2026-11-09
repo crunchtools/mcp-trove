@@ -10,6 +10,40 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-09
+
+### Fixed
+
+- **The Ollama vision backend read whatever was listening on port 11434.** It
+  called `urllib.request.urlopen(...).read()` with no argument and no size
+  limit, so the thing on the other end decided how much memory this process
+  used. A caption is a sentence or two; a megabyte answer means something else
+  is on that port. The body is now read in bounded pieces under a 4 MB cap,
+  measured before each chunk is copied in.
+
+- **An Ollama failure says what came back.** Every outcome arrived as
+  `Ollama request failed: <exception>`, so a wrong port, a Grafana answering
+  on 11434 and a missing model were one message. They now name the method, the
+  URL, the status, the content-type and a short body snippet.
+
+### Added
+
+- **The client says what it is.** The Ollama request carries
+  `User-Agent: mcp-trove-crunchtools/<version> (+<repo url>)`, with the version
+  read from installed package metadata.
+
+### Changed
+
+- The Ollama backend uses `httpx` rather than `urllib.request`. httpx is the
+  HTTP client the MCP Server profile names, it is what makes a bounded read
+  expressible, and it is now a declared dependency rather than something
+  arriving through fastmcp.
+
+- Inherits constitution v1.36.0, whose MCP Server profile 1.8.0 states the
+  outbound HTTP contract (RT #1601). This repo was missing from that ticket's
+  survey, because the survey grepped for httpx, aiohttp and requests and this
+  call used `urllib.request`.
+
 ## [1.0.8] - 2026-11-05
 
 ### Fixed
