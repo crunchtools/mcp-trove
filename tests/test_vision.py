@@ -279,7 +279,13 @@ class TestOpenRouterBackend:
             api_key="sk-or-file",
             base_url="https://openrouter.ai/api/v1",
             default_headers=vision.SDK_HEADERS,
+            # The SDK's OWN client class, so the ceiling hook lands on whichever
+            # httpx flavour the SDK was built on rather than on a guess.
+            http_client=mock_openai.DefaultHttpxClient.return_value,
         )
+        assert mock_openai.DefaultHttpxClient.call_args.kwargs["event_hooks"] == {
+            "response": [vision._reject_oversized]
+        }
 
     def test_video_sent_as_video_url_with_zdr(self, tmp_path: Path) -> None:
         clip = tmp_path / "clip.mp4"
@@ -646,3 +652,65 @@ class TestSdkHttpContract:
         vision._reject_oversized(response)
 
         assert b"".join(response.stream) == b'{"ok": true}'
+
+
+class TestSdkErrorBodies:
+    """`with_streaming_response` bounds the success path only.
+
+    On a 4xx or 5xx the SDK reads the body to completion inside `create()`
+    (`_base_client.py`: `if not err.response.is_closed: err.response.read()`)
+    before anything is handed back, so the ceiling has to be installed on the
+    client rather than applied around the call. An error body is the likeliest
+    one to be enormous, or not to be from the API at all.
+    """
+
+    def test_an_oversized_error_body_is_refused(self, tmp_path: Path) -> None:
+        img = _png(tmp_path)
+
+        def huge_error(_request: object) -> Any:
+            import httpx2
+
+            def chunks() -> Iterator[bytes]:
+                for _ in range(vision.MAX_RESPONSE_SIZE // 1024 + 1):
+                    yield b"e" * 1024
+
+            return httpx2.Response(
+                500, headers={"content-type": "application/json"}, content=chunks()
+            )
+
+        with (
+            openrouter_backend(huge_error) as (backend, _calls),
+            pytest.raises(ExtractionError, match="byte limit"),
+        ):
+            backend.caption(img, "image")
+
+    def test_an_error_body_declaring_too_much_is_refused(self, tmp_path: Path) -> None:
+        img = _png(tmp_path)
+
+        def declares_too_much(_request: object) -> Any:
+            import httpx2
+
+            response = httpx2.Response(503, json={"error": "busy"})
+            response.headers["content-length"] = str(vision.MAX_RESPONSE_SIZE + 1)
+            return response
+
+        with (
+            openrouter_backend(declares_too_much) as (backend, _calls),
+            pytest.raises(ExtractionError, match="declared"),
+        ):
+            backend.caption(img, "image")
+
+    def test_a_small_error_body_still_surfaces_the_sdk_message(self, tmp_path: Path) -> None:
+        """The hook bounds; it does not swallow. A 400 should still read like a 400."""
+        img = _png(tmp_path)
+
+        def rate_limited(_request: object) -> Any:
+            import httpx2
+
+            return httpx2.Response(429, json={"error": {"message": "slow down"}})
+
+        with (
+            openrouter_backend(rate_limited) as (backend, _calls),
+            pytest.raises(ExtractionError, match="429"),
+        ):
+            backend.caption(img, "image")

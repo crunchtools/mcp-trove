@@ -1456,7 +1456,7 @@ wheels = [
 
 [[package]]
 name = "mcp-trove-crunchtools"
-version = "1.2.0"
+version = "1.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "av", version = "18.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -1507,8 +1507,8 @@ requires-dist = [
     { name = "httpx2", marker = "extra == 'dev'", specifier = ">=0.29" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13" },
     { name = "olefile", specifier = ">=0.47" },
-    { name = "openai", marker = "extra == 'vision'", specifier = ">=1.0" },
-    { name = "openai", marker = "extra == 'vision-openai'", specifier = ">=1.0" },
+    { name = "openai", marker = "extra == 'vision'", specifier = ">=1.17" },
+    { name = "openai", marker = "extra == 'vision-openai'", specifier = ">=1.17" },
     { name = "openpyxl", specifier = ">=3.1" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pymupdf4llm", specifier = ">=0.0.17,<2" },

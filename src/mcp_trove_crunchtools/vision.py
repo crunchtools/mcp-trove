@@ -140,6 +140,23 @@ def _reject_oversized(response: Any) -> None:
     response.stream = _bounded_stream_class(response)(response.stream, where)
 
 
+def _sdk_http_client(openai: Any) -> Any:
+    """The openai SDK's own client class, carrying the ceiling hook.
+
+    `with_streaming_response` bounds the SUCCESS path only. On a 4xx or 5xx the
+    SDK reads the body to completion inside `create()` -- `_base_client.py`,
+    `if not err.response.is_closed: err.response.read()` -- before anything is
+    handed back, so an error body was unbounded. An error body is the likeliest
+    one to be enormous or not from the API at all.
+
+    `DefaultHttpxClient` is the SDK's own export and subclasses whichever httpx
+    flavour it was built on, so the hook lands on the right one without this
+    module guessing: openai moved from `httpx` to `httpx2` between 1.x and 3.x.
+    It was added in openai 1.17.0, which is the floor the extra declares.
+    """
+    return openai.DefaultHttpxClient(event_hooks={"response": [_reject_oversized]})
+
+
 def _read_capped_sdk(response: Any, what: str) -> bytes:
     """Read an openai SDK streaming response under the ceiling.
 
@@ -319,7 +336,11 @@ class OpenAIBackend:
         if not api_key:
             raise ExtractionError("OpenAIBackend", "OPENAI_API_KEY not set")
 
-        self._client = openai.OpenAI(api_key=api_key, default_headers=SDK_HEADERS)
+        self._client = openai.OpenAI(
+            api_key=api_key,
+            default_headers=SDK_HEADERS,
+            http_client=_sdk_http_client(openai),
+        )
         return self._client
 
     def caption(self, path: Path, file_type: str) -> str:
@@ -413,6 +434,7 @@ class OpenRouterBackend:
             api_key=api_key.get_secret_value(),
             base_url=OPENROUTER_BASE_URL,
             default_headers=SDK_HEADERS,
+            http_client=_sdk_http_client(openai),
         )
         return self._client
 

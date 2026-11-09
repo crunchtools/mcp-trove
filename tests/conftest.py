@@ -146,7 +146,15 @@ def openai_sdk(reply: Any) -> Generator[SdkCalls, None, None]:
         return reply(request) if callable(reply) else reply
 
     def factory(**kwargs: Any) -> Any:
-        kwargs["http_client"] = httpx2.Client(transport=httpx2.MockTransport(handler))
+        # The transport goes INSIDE the client production code asked for, so
+        # the response hook it installs is still the one running. Replacing the
+        # client would take the hook off with it, and the error path is bounded
+        # by nothing else.
+        given = kwargs.pop("http_client", None)
+        hooks = getattr(given, "event_hooks", {}) if given is not None else {}
+        kwargs["http_client"] = httpx2.Client(
+            transport=httpx2.MockTransport(handler), event_hooks=hooks
+        )
         return real(**kwargs)
 
     with patch.object(openai, "OpenAI", factory):
