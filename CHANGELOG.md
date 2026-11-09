@@ -10,6 +10,35 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-09
+
+### Fixed
+
+- **An openai-SDK error body was still unbounded.** 1.2.0 read through
+  `with_streaming_response`, which bounds the success path — but on a 4xx or
+  5xx the SDK reads the body to completion inside `create()`
+  (`_base_client.py`: `if not err.response.is_closed: err.response.read()`)
+  before anything is handed back, so the 4MB ceiling never saw it. An error
+  body is the likeliest one to be enormous, or not to be from the API at all.
+
+  Both openai-backed clients now carry the existing response hook on
+  `openai.DefaultHttpxClient`, which is the SDK's own export and subclasses
+  whichever httpx flavour the SDK was built on — so the hook lands on the
+  right one without this module guessing, which was the reason 1.2.0 avoided
+  passing a client at all. `with_streaming_response` stays: it is still what
+  lets the success path be measured before the copy.
+
+  Three tests, checked against the unhooked client to confirm they fail on it:
+  an oversized streamed error body and an oversized declared length are both
+  refused with the byte limit named, and a small 429 still surfaces the SDK's
+  own status message — the hook bounds, it does not swallow.
+
+### Changed
+
+- The `vision-openai` and `vision` extras require `openai>=1.17`, the first
+  release that exports `DefaultHttpxClient` (bisected, not assumed: 1.16.2
+  does not have it).
+
 ## [1.2.0] - 2026-11-09
 
 ### Fixed
