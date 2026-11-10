@@ -30,7 +30,7 @@ COPY src/ ./src/
 # RT #1542); dependency bumps now arrive as lockfile PRs through CI.
 RUN pip install --no-cache-dir uv==0.12.23 \
     && uv export --frozen --no-dev --extra vision --no-emit-project -o requirements.txt \
-    && pip install --no-cache-dir --require-hashes -r requirements.txt \
+    && pip install --no-cache-dir --require-hashes --no-deps -r requirements.txt \
     && pip install --no-cache-dir --no-deps . \
     && pip uninstall -y uv
 
@@ -46,7 +46,7 @@ RUN python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='BA
 FROM quay.io/hummingbird/python:3.14
 
 LABEL name="mcp-trove-crunchtools" \
-      version="1.2.1" \
+      version="1.2.2" \
       summary="Self-hosted local file indexing MCP server with semantic search" \
       description="Index local directories and search over contents using hybrid vector + keyword search" \
       maintainer="crunchtools.com" \
