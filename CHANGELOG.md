@@ -10,6 +10,21 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-11-10
+
+### Fixed
+
+- **The locked requirements install could still re-resolve.** The builder
+  installed `requirements.txt` (the frozen, hash-checked export of
+  `uv.lock`) with `--require-hashes` but without `--no-deps`, so pip was
+  still free to walk each package's own dependency metadata and pull in
+  whatever satisfied it at build time, rather than exactly what the lock
+  pinned. The project's own `.` install already carried `--no-deps`; the
+  lockfile install now does too, so `--require-hashes` verifies the pinned
+  set and `--no-deps` is what actually keeps pip from re-resolving past it.
+  Same class of drift as the mcp-gemini outage (RT #1564): a build silently
+  shipping newer-than-tested dependency versions.
+
 ## [1.2.1] - 2026-11-09
 
 ### Fixed
