@@ -779,9 +779,16 @@ def _check_not_shrunk(directory: Path, files_found: int) -> None:
 
     An unmounted or half-listed source looks exactly like a tree whose files
     were deleted. Refusing keeps a broken mount from passing as a quiet,
-    successful run; trove_reindex on the path skips this check. The baseline
-    is the index, not the last run's count, so files newly excluded by the
-    configuration (removed just before) do not look like a shrink.
+    successful run. The baseline is the index, not the last run's count, so
+    files newly excluded by the configuration (removed just before) do not
+    look like a shrink.
+
+    trove_reindex skips this gate but does NOT clear the baseline: pruning
+    entries for files that are gone happens in _remove_missing, which needs a
+    manifest, and a server with no TROVE_MANIFEST_DIR never has one. A
+    reindex therefore leaves the stale rows in place and the next unforced
+    run aborts again, so the remedy named here is trove_remove followed by
+    trove_index, not trove_reindex.
     """
     indexed = len(_rows_under(directory))
     if indexed < MIN_FOUND_BASELINE:
@@ -790,8 +797,9 @@ def _check_not_shrunk(directory: Path, files_found: int) -> None:
         return
     reason = (
         f"found {files_found} files, under {MIN_FOUND_RATIO:.0%} of the "
-        f"{indexed} indexed there; the source may be unmounted. Run "
-        "trove_reindex on the path if the files really were removed."
+        f"{indexed} indexed there; the source may be unmounted. If the files "
+        "really were removed, run trove_remove on the path and then "
+        "trove_index to rebuild it."
     )
     db.abort_run(db.start_run(str(directory), files_found), reason)
     raise IndexAbortedError(str(directory), reason)

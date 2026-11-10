@@ -10,7 +10,23 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
-## [1.2.2] - 2026-11-10
+## [1.2.3] - 2026-11-10
+
+### Fixed
+
+- **The shrink-abort message named a remedy that cannot work.** When a
+  directory holds under 50% of the files indexed under it, the run aborts
+  and told the operator to "run trove_reindex on the path if the files
+  really were removed." A reindex skips the gate but never clears it:
+  pruning entries for files that are gone happens in `_remove_missing`,
+  which only runs from a manifest, and the MCP server has no
+  `TROVE_MANIFEST_DIR` — only the nightly `--index` job does. So
+  `trove_reindex` reported `files_removed: 0`, left every stale row in
+  place, and the next nightly run aborted on the same baseline. Found on
+  gloval after `/pcloud/Autosync/Screenshots` went from 129 files to 7: the
+  index check sat CRITICAL for eight hours and the documented fix moved
+  nothing. The message now names the remedy that works — `trove_remove` on
+  the path, then `trove_index` to rebuild it.
 
 ### Fixed
 
