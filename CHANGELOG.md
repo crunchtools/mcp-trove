@@ -10,6 +10,12 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-11-11
+
+### Changed
+
+- No functional change. First release on the build-once container pipeline (RT#1550): `:latest` now names a digest that passed the release gates.
+
 ## [1.2.3] - 2026-11-10
 
 ### Fixed
