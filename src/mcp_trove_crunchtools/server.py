@@ -25,7 +25,7 @@ READ_ONLY = {"readOnlyHint": True}
 
 mcp = FastMCP(
     "mcp-trove-crunchtools",
-    version="1.2.3",
+    version="1.2.4",
     instructions=(
         "Self-hosted local file indexing MCP server with semantic search. "
         "Index any local directory and search over contents using hybrid "
