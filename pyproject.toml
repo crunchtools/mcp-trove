@@ -138,6 +138,7 @@ python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+show_traceback = true  # diagnostic for #132: CI-only mypy INTERNAL ERROR
 # pymupdf ships partial annotations: pymupdf.open() is untyped, which strict
 # mode's disallow_untyped_calls rejects.
 untyped_calls_exclude = ["pymupdf", "striprtf"]
