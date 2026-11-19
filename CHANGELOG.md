@@ -11,6 +11,10 @@ reconstructed from their commit ranges in RT #1485.
 ## [Unreleased]
 
 ### Changed
+- Promote signs the image with the fleet cosign key (`sign: true`), because
+  bootc hosts are moving to trust only signed `quay.io/crunchtools` images
+  (crunchtools/rhel10-bootc-server#47). Needs the repo's `cosign-signing`
+  environment to hold `COSIGN_PRIVATE_KEY` and `COSIGN_PASSWORD`.
 - The container release runs constitution v1.51.0's `container-release.yml`
   (was v1.46.0) and grants it `issues: write`, so a failed weekly rebuild opens
   an issue instead of only emailing whoever last touched the cron line. A `v*`
