@@ -1,5 +1,4 @@
-# a472 throwaway: probe /proc in nested containers on the Exedore cached pool.
-# Never merge.
+# a472 throwaway: where does a nested container's /proc come from? Never merge.
 name: a472 repro
 on:
   pull_request:
@@ -7,21 +6,30 @@ permissions:
   contents: read
 jobs:
   probe:
-    runs-on: crunchtools-cached
+    strategy:
+      fail-fast: false
+      matrix:
+        on: [ubuntu-latest, crunchtools-cached]
+    runs-on: ${{ matrix.on }}
     timeout-minutes: 20
     steps:
       - name: probe
         run: |
-          say() { echo "A472: $*"; }
-          say "runner=$RUNNER_NAME podman=$(podman version --format '{{.Client.Version}}') crun=$(crun --version | head -1) kernel=$(uname -r)"
-          say "outer pid=$$ proc-mounts: $(awk '$5 ~ /^\/proc/ {printf "%s(%s) ", $5, $9}' /proc/self/mountinfo)"
-          say "outer masked-count=$(awk '$5 ~ /^\/proc\// {n++} END{print n+0}' /proc/self/mountinfo)"
-          img=quay.io/crunchtools/sdlc:latest
-          podman pull -q "$img" >/dev/null 2>&1 || say "pull failed"
-          probe='p=$$; if [ -e /proc/$p ]; then v=OK; else v=MISMATCH; fi; echo "pid=$p self=$(readlink /proc/self) proc/$p=$v procfs=$(awk "\$5==\"/proc\"{print \$9\" \"\$4}" /proc/self/mountinfo)"'
-          say "plain:   $(podman run --rm --entrypoint sh "$img" -c "$probe" 2>&1 | tail -1)"
-          say "gateflags: $(podman run --rm --cap-drop=all --security-opt=no-new-privileges --cpus 2 --memory 8g --entrypoint sh "$img" -c "$probe" 2>&1 | tail -1)"
-          say "pidhost: $(podman run --rm --pid=host --entrypoint sh "$img" -c "$probe" 2>&1 | tail -1)"
-          say "psutil: $(podman run --rm --entrypoint sh "$img" -c 'uvx -q --from psutil python -c "import psutil,os;print(os.getpid(),psutil.Process().cpu_affinity())" 2>&1 | tail -1' 2>&1 | tail -1)"
-          say "crun-debug: $(podman --log-level=debug run --rm --entrypoint true "$img" 2>&1 | grep -iE 'proc|mount.*EPERM|fallback' | head -3 | tr '\n' ' ')"
+          cat > /tmp/inner.sh <<'IN'
+          say() { echo "A472[$OPT]: $*"; }
+          say "masks=$(grep -c ' /proc/' /proc/self/mountinfo) podman=$(podman version --format '{{.Client.Version}}')"
+          say "unshare: $(unshare --user --map-root-user --pid --fork --mount-proc sh -c 'echo pid=$$ self=$(readlink /proc/self)' 2>&1 | tail -1)"
+          podman pull -q docker.io/library/busybox:1.37 >/dev/null 2>&1
+          for extra in "" "--cgroups=enabled" "--cgroupns=private"; do
+            out=$(podman --log-level=debug run --rm $extra docker.io/library/busybox:1.37 sh -c 'echo "pid=$$ self=$(readlink /proc/self) same=$([ "$(readlink /proc/1/ns/pid)" = "$(readlink /proc/self/ns/pid)" ] && echo y || echo n)"' 2>&1)
+            say "run[$extra]: $(echo "$out" | grep -E '^pid=' | tail -1) | $(echo "$out" | grep -iE 'proc' | grep -viE 'fips|/proc/sys/|seccomp' | sed 's/time="[^"]*" //' | head -4 | tr '\n' ' ')$(echo "$out" | grep -E '^Error' | head -1)"
+          done
+          IN
+          if [ -n "${RUNNER_NAME##exedore*}" ]; then dev="--device /dev/net/tun"; else dev="--device /dev/net/tun"; fi
+          for opt in unmask=/proc/sys 'unmask=/proc/*' unmask=ALL; do
+            podman run --rm --device /dev/fuse $dev --security-opt label=disable --security-opt seccomp=unconfined \
+              --security-opt "$opt" -e OPT="$opt" -v /tmp/inner.sh:/inner.sh:ro --entrypoint bash \
+              quay.io/crunchtools/gha-runner:main /inner.sh 2>&1 | grep 'A472\[' || echo "A472[$opt]: outer run failed"
+          done
+          echo "A472: host podman=$(podman version --format '{{.Client.Version}}') runner=$RUNNER_NAME"
           exit 1
