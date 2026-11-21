@@ -1,0 +1,45 @@
+# a472 throwaway: reproduce the mypy INTERNAL ERROR on the Exedore cached pool
+# with --show-traceback (python-sdlc >= 0.10.4). Never merge.
+name: a472 repro
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  repro:
+    name: repro ${{ matrix.n }}
+    strategy:
+      fail-fast: false
+      matrix:
+        n: [1, 2, 3, 4]
+    runs-on: crunchtools-cached
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: facts
+        run: |
+          set -x
+          echo "runner=$RUNNER_NAME"; nproc; ulimit -a; cat /proc/self/cgroup
+          cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/cpu.max /sys/fs/cgroup/pids.max 2>&1 || true
+          cat /sys/fs/cgroup/cgroup.controllers 2>&1 || true
+          podman version; podman info --format '{{.Store.GraphDriverName}} {{.Store.GraphOptions}} {{.Host.CgroupsVersion}} {{.Host.CgroupManager}}'
+          podman volume ls; df -h /home/podman/.local/share/containers /tmp
+      - name: loop sdlc ci
+        run: |
+          fails=0
+          for i in 1 2 3 4; do
+            echo "::group::attempt $i"
+            rc=0; .sdlc/bin/sdlc ci > "out.$i" 2>&1 || rc=$?
+            cat "out.$i"; echo "rc=$rc"
+            cat /sys/fs/cgroup/memory.events /sys/fs/cgroup/memory.peak 2>/dev/null || true
+            echo "::endgroup::"
+            if grep -q 'INTERNAL ERROR' "out.$i"; then fails=$((fails+1)); cp "out.$i" crash.$i; fi
+          done
+          echo "INTERNAL ERROR in $fails/4 attempts"
+          for f in crash.*; do [ -f "$f" ] || continue
+            echo "===== $f: mypy section"
+            awk '/== mypy/{p=1} p{print} /COULD NOT RUN|== [a-z]/ && !/== mypy/{if(p)exit}' "$f" | head -120
+          done
+          [ "$fails" -eq 0 ]
