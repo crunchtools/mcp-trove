@@ -1,45 +1,27 @@
-# a472 throwaway: reproduce the mypy INTERNAL ERROR on the Exedore cached pool
-# with --show-traceback (python-sdlc >= 0.10.4). Never merge.
+# a472 throwaway: probe /proc in nested containers on the Exedore cached pool.
+# Never merge.
 name: a472 repro
 on:
   pull_request:
 permissions:
   contents: read
 jobs:
-  repro:
-    name: repro ${{ matrix.n }}
-    strategy:
-      fail-fast: false
-      matrix:
-        n: [1, 2, 3, 4]
+  probe:
     runs-on: crunchtools-cached
-    timeout-minutes: 75
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: facts
+      - name: probe
         run: |
-          set -x
-          echo "runner=$RUNNER_NAME"; nproc; ulimit -a; cat /proc/self/cgroup
-          cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/cpu.max /sys/fs/cgroup/pids.max 2>&1 || true
-          cat /sys/fs/cgroup/cgroup.controllers 2>&1 || true
-          podman version; podman info --format '{{.Store.GraphDriverName}} {{.Store.GraphOptions}} {{.Host.CgroupsVersion}} {{.Host.CgroupManager}}'
-          podman volume ls; df -h /home/podman/.local/share/containers /tmp
-      - name: loop sdlc ci
-        run: |
-          fails=0
-          for i in 1 2 3 4; do
-            echo "::group::attempt $i"
-            rc=0; .sdlc/bin/sdlc ci > "out.$i" 2>&1 || rc=$?
-            cat "out.$i"; echo "rc=$rc"
-            cat /sys/fs/cgroup/memory.events /sys/fs/cgroup/memory.peak 2>/dev/null || true
-            echo "::endgroup::"
-            if grep -q 'INTERNAL ERROR' "out.$i"; then fails=$((fails+1)); cp "out.$i" crash.$i; fi
-          done
-          echo "INTERNAL ERROR in $fails/4 attempts"
-          for f in crash.*; do [ -f "$f" ] || continue
-            echo "===== $f: mypy section"
-            awk '/== mypy/{p=1} p{print} /COULD NOT RUN|== [a-z]/ && !/== mypy/{if(p)exit}' "$f" | head -120
-          done
-          [ "$fails" -eq 0 ]
+          say() { echo "A472: $*"; }
+          say "runner=$RUNNER_NAME podman=$(podman version --format '{{.Client.Version}}') crun=$(crun --version | head -1) kernel=$(uname -r)"
+          say "outer pid=$$ proc-mounts: $(awk '$5 ~ /^\/proc/ {printf "%s(%s) ", $5, $9}' /proc/self/mountinfo)"
+          say "outer masked-count=$(awk '$5 ~ /^\/proc\// {n++} END{print n+0}' /proc/self/mountinfo)"
+          img=quay.io/crunchtools/sdlc:latest
+          podman pull -q "$img" >/dev/null 2>&1 || say "pull failed"
+          probe='p=$$; if [ -e /proc/$p ]; then v=OK; else v=MISMATCH; fi; echo "pid=$p self=$(readlink /proc/self) proc/$p=$v procfs=$(awk "\$5==\"/proc\"{print \$9\" \"\$4}" /proc/self/mountinfo)"'
+          say "plain:   $(podman run --rm --entrypoint sh "$img" -c "$probe" 2>&1 | tail -1)"
+          say "gateflags: $(podman run --rm --cap-drop=all --security-opt=no-new-privileges --cpus 2 --memory 8g --entrypoint sh "$img" -c "$probe" 2>&1 | tail -1)"
+          say "pidhost: $(podman run --rm --pid=host --entrypoint sh "$img" -c "$probe" 2>&1 | tail -1)"
+          say "psutil: $(podman run --rm --entrypoint sh "$img" -c 'uvx -q --from psutil python -c "import psutil,os;print(os.getpid(),psutil.Process().cpu_affinity())" 2>&1 | tail -1' 2>&1 | tail -1)"
+          say "crun-debug: $(podman --log-level=debug run --rm --entrypoint true "$img" 2>&1 | grep -iE 'proc|mount.*EPERM|fallback' | head -3 | tr '\n' ' ')"
+          exit 1
