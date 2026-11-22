@@ -271,6 +271,9 @@ class GeminiBackend:
         self._client = genai.Client(
             api_key=api_key,
             http_options={
+                # google-genai 3.x defaults to v1, where preview models are
+                # not served; v1beta is what every 1.x and 2.x release used.
+                "api_version": "v1beta",
                 "timeout": timeout_s * 1000,
                 # The SDK owns the transport, so the agent string and the
                 # ceiling are handed to it: `check_http_client` cannot see

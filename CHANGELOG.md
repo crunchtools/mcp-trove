@@ -11,6 +11,8 @@ reconstructed from their commit ranges in RT #1485.
 ## [Unreleased]
 
 ### Changed
+- The Gemini backend pins `api_version` to `v1beta`, so google-genai 3.x
+  (which defaults to `v1`) keeps reaching preview models as 2.x did.
 - Gatehouse triage receives the review job's result (`review_result`), so a PR whose review died before posting anything is held instead of passing.
 - Promote signs the image with the fleet cosign key (`sign: true`), because
   bootc hosts are moving to trust only signed `quay.io/crunchtools` images
