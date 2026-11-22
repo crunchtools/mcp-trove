@@ -619,6 +619,7 @@ class TestSdkHttpContract:
 
         options = mock_genai.Client.call_args.kwargs["http_options"]
         assert options["headers"] == vision.SDK_HEADERS
+        assert options["api_version"] == "v1beta"
         hooks = options["client_args"]["event_hooks"]["response"]
         assert hooks == [vision._reject_oversized]
 
