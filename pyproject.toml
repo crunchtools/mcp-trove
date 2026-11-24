@@ -157,4 +157,11 @@ skip = ["semgrep"]
 
 
 [tool.sdlc]
+# Written by crunchtools/sdlc's scripts/convert_repo.py: moved from the workflows.
+publish = "pypi"
 repo-kinds = ["mcp-server"]
+
+[tool.sdlc.image]
+# Written by crunchtools/sdlc's scripts/convert_repo.py: moved from the workflows.
+image = "quay.io/crunchtools/mcp-trove"
+boot = "mcp"
