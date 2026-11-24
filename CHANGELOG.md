@@ -10,6 +10,8 @@ reconstructed from their commit ranges in RT #1485.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-24
+
 ### Changed
 - The Gemini backend pins `api_version` to `v1beta`, so google-genai 3.x
   (which defaults to `v1`) keeps reaching preview models as 2.x did.
