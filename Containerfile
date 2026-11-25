@@ -104,7 +104,7 @@ ENV FASTEMBED_CACHE_PATH=/fastembed-cache
 # Import the PDF stack by name: extractor.py imports it lazily, so a hollow
 # pymupdf4llm (2.0 shipped as an empty shim, RT #1542) would otherwise pass
 # this check and fail every PDF at runtime.
-RUN ["python3", "-c", "from mcp_trove_crunchtools import main; import pymupdf, pymupdf4llm; pymupdf4llm.to_markdown; import docx, pptx, openpyxl, xlrd, olefile, striprtf.striprtf, defusedxml, av; av.Codec('mp3', 'w'); assert av.ffmpeg_version_info == '9.1', av.ffmpeg_version_info; print('Installation verified')"]
+RUN ["python3", "-c", "from mcp_trove_crunchtools import main; import pymupdf, pymupdf4llm; pymupdf4llm.to_markdown; import docx, pptx, openpyxl, xlrd, olefile, striprtf.striprtf, defusedxml, av; av.Codec('mp3', 'w'); av.Codec('libdav1d', 'r'); assert av.ffmpeg_version_info == '9.1', av.ffmpeg_version_info; print('Installation verified')"]
 
 ENV TROVE_DB=/tmp/trove-data/trove.db
 
