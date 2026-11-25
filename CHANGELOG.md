@@ -25,6 +25,12 @@ reconstructed from their commit ranges in RT #1485.
   release of this repo; each release PR moves this image's label to the new
   version, so a release cut that way passes.
 
+### Security
+- The image builds FFmpeg 9.1 (with LAME 3.100) from hash-pinned source and
+  PyAV 19.0.2 from its sdist against it, instead of using the FFmpeg 9.0.2
+  bundled in PyAV's wheel, which carries CVE-2026-135736 and CVE-2026-135743
+  (critical) plus about 18 High and Medium CVEs fixed in 9.1.
+
 ## [1.2.4] - 2026-11-11
 
 ### Changed
